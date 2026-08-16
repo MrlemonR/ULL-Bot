@@ -1,0 +1,16 @@
+model_list:
+  - model_name: chat-default
+    litellm_params:
+      model: openrouter/openai/gpt-oss-20b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true
+
+# NOT: "openai/gpt-oss-20b:free" 2026-08-16'da OpenRouter'ın canlı
+# GET /api/v1/models uç noktasından çekilen ücretsiz modeller arasından
+# seçildi (bkz. DECISIONS.md). Bu liste sık değişir — modeli değiştirmek
+# için sadece `model:` satırını güncelle, orchestrator kodu etkilenmez.

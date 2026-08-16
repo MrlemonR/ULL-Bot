@@ -1,0 +1,20 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./config/litellm.${PROFILE:-desktop}.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    env_file:
+      - .env
+    restart: unless-stopped
+
+# Faz 1 notu: Bu proxy'yi geliştirme sırasında Docker olmadan da
+# çalıştırabilirsin: `uv run litellm --config config/litellm.desktop.yaml --port 4000`
+# (bkz. README.md, DECISIONS.md — Windows taşınabilirliği için Docker'a
+# zorunlu bağımlılık istenmedi).
+#
+# Faz 5: Ollama container'a eklenmeyecek, host'ta native çalışacak (spec §8).
+# Faz 3+: orchestrator servisinin container'a alınması ayrı değerlendirilecek;
+# şimdilik `uv run uvicorn app.main:app --reload` ile local çalışıyor.

@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.pytest_cache/
+.ruff_cache/
+node_modules/
+
+# editors / OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
