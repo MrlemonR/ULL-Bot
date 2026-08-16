@@ -1,0 +1,57 @@
+# Ajanın dosya araçlarının çalışabileceği alan (spec §6.3).
+#
+# Kural: DENY her zaman ALLOW'u yener. Bir yol önce sembolik bağlar çözülerek
+# normalize edilir (`Path.resolve()`), sonra bu listelere karşı doğrulanır —
+# yani `~/Projects/x -> /etc` gibi bir symlink ile dışarı çıkılamaz.
+#
+# Buradaki listeler kullanıcı tarafından düzenlenebilir. Kabuk komutlarının
+# "blocked" listesi ise bilinçli olarak burada DEĞİL, `app/safety/policy.py`
+# içinde sabittir — UI'dan veya config'den gevşetilememeli (spec §7.3).
+
+# Ajanın okuyabileceği kökler. WORKSPACE_ROOT (.env) her zaman ek olarak
+# izinli sayılır, buraya yazmaya gerek yok.
+allowed_paths:
+  - "~/Projects"
+  - "~/Documents"
+  - "~/Downloads"
+
+# İzinli köklerin içinde kalsa bile asla dokunulmayacak yollar.
+denied_paths:
+  - "~/.ssh"
+  - "~/.gnupg"
+  - "~/.aws"
+  - "~/.config/gcloud"
+  - "~/.kube"
+  - "~/.docker"
+  - "~/.netrc"
+  - "~/.mozilla"
+  - "~/.config/google-chrome"
+  - "~/.config/chromium"
+  - "~/.config/BraveSoftware"
+  - "~/.config/vivaldi"
+  - "~/.thunderbird"
+  - "~/.password-store"
+  - "~/.local/share/keyrings"
+
+# Ad/yol kalıbı ile reddedilenler (fnmatch; hem dosya adına hem tam yola bakılır).
+# Sızdırılması en kolay şeyler: anahtarlar, tokenlar, kimlik dosyaları.
+denied_globs:
+  - ".env"
+  - ".env.*"
+  - "*.pem"
+  - "*.key"
+  - "*.p12"
+  - "*.pfx"
+  - "id_rsa*"
+  - "id_ecdsa*"
+  - "id_ed25519*"
+  - "*.kdbx"
+  - ".git-credentials"
+  - ".npmrc"
+  - ".pypirc"
+  - "credentials.json"
+  - "token.json"
+  - "*/.git/config"
+
+# Tek seferde okunabilecek en büyük dosya (byte). Büyüğü kısaltılarak okunur.
+max_read_bytes: 262144

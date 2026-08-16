@@ -6,6 +6,9 @@
   --text: #e6e8eb;
   --muted: #8b8f99;
   --accent: #5b8cff;
+  --ok: #4bbf73;
+  --warn: #e8a547;
+  --danger: #e0574a;
 }
 
 * { box-sizing: border-box; }
@@ -95,3 +98,118 @@ header h1 { font-size: 1rem; margin: 0; }
 }
 
 .composer input:disabled { opacity: 0.6; }
+
+/* --- Faz 2: araç blokları, onay diyalogları, durum rozetleri --- */
+
+.badges { margin-left: auto; display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+.badge {
+  font-size: 0.7rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.badge-warn { color: var(--danger); border-color: var(--danger); }
+
+.tool {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 0.8rem;
+  max-width: 100%;
+}
+
+.tool summary {
+  cursor: pointer;
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tool-confirm { border-left-color: var(--warn); }
+.tool-blocked { border-left-color: var(--danger); }
+
+.tool-name { color: var(--accent); }
+.tool-args { color: var(--muted); overflow-wrap: anywhere; }
+.tool-ok { color: var(--ok); margin-left: auto; }
+.tool-fail { color: var(--danger); margin-left: auto; }
+
+.risk {
+  font-size: 0.65rem;
+  border-radius: 999px;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.risk-confirm { color: var(--warn); border-color: var(--warn); }
+.risk-blocked { color: var(--danger); border-color: var(--danger); }
+
+.tool-output {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  color: var(--muted);
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.approval {
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: rgba(232, 165, 71, 0.08);
+  font-size: 0.85rem;
+}
+
+.approval-title { color: var(--warn); margin-bottom: 0.4rem; }
+
+.approval-command {
+  margin: 0 0 0.4rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.approval-reason, .approval-paths, .approval-dry {
+  color: var(--muted);
+  font-size: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.approval-dry { color: var(--ok); }
+
+.approval-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+
+.approval-actions button {
+  font: inherit;
+  border: none;
+  border-radius: 5px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.btn-approve { background: var(--ok); color: #10131a; }
+.btn-deny { background: var(--panel); color: var(--text); border: 1px solid var(--border) !important; }
+
+.approval-yes { color: var(--ok); font-size: 0.75rem; }
+.approval-no { color: var(--danger); font-size: 0.75rem; }
+
+.notice {
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-left: 2px solid var(--border);
+  padding-left: 0.6rem;
+}
+
+.notice-warn { color: var(--warn); border-left-color: var(--warn); }
+.notice-error { color: var(--danger); border-left-color: var(--danger); }
