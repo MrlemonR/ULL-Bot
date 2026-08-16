@@ -13,11 +13,14 @@ import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from app.agent.llm import LLMClient, LLMError, LiteLLMClient, ToolCall
+from app.agent.llm import LLMClient, LLMError, LiteLLMClient, RateLimited, ToolCall
 from app.agent.prompts import system_prompt, wrap_tool_result
 from app.agent.tools import get_tool, tool_schemas
 from app.agent.tools.base import ToolContext, ToolResult
 from app.memory.store import ensure_session, load_history, save_message
+from app.quota.probes import record_rate_limit
+from app.quota.tracker import record_usage
+from app.router.selector import NoProviderAvailable, Selection, choose
 from app.safety.audit import audit
 from app.settings import settings
 
@@ -57,6 +60,8 @@ class AgentLoop:
             dry_run=settings.dry_run if dry_run is None else dry_run,
         )
         self.steps_used = 0
+        # Bu oturumda hâlâ hangi sağlayıcıyı kullanıyoruz (model devri rozeti için).
+        self.current_provider: str = ""
 
     # --- ana döngü --------------------------------------------------------
 
@@ -88,7 +93,7 @@ class AgentLoop:
                 await self.emit({"type": "token", "content": text})
 
             try:
-                response = await self.llm.complete(messages, tool_schemas(), on_token)
+                response = await self._call_model(messages, on_token)
             except LLMError as exc:
                 await self.emit({"type": "error", "message": str(exc)})
                 audit("llm_error", session=self.session_id, error=str(exc)[:500])
@@ -105,7 +110,14 @@ class AgentLoop:
                         self.session_id, "assistant", final_text, model=response.model
                     )
                 await self.emit(
-                    {"type": "done", "steps": self.steps_used, "model": response.model}
+                    {
+                        "type": "done",
+                        "steps": self.steps_used,
+                        "model": response.model,
+                        "provider": response.provider or self.current_provider,
+                        "tokens": response.prompt_tokens + response.completion_tokens,
+                        "ms": response.latency_ms,
+                    }
                 )
                 audit("turn_end", session=self.session_id, steps=self.steps_used)
                 return final_text
@@ -168,6 +180,116 @@ class AgentLoop:
                     save_message(self.session_id, "assistant", message)
                     return message
                 budget += self.max_steps
+
+    # --- model çağrısı ve sağlayıcı devri ---------------------------------
+
+    async def _call_model(self, messages: list[dict[str, Any]], on_token) -> Any:
+        """Sağlayıcı seç, çağır, 429 alırsan sessizce bir sonrakine geç.
+
+        Spec §9 Faz 3 kabul kriteri: "bir sağlayıcının limitini kasten doldur;
+        sistem sessizce diğerine geçsin ve UI'da sebebi görünsün." Sessizce =
+        kullanıcıya hata gösterilmez; "UI'da sebebi görünür" = `model_switch`
+        olayı gönderilir.
+        """
+        attempted: set[str] = set()
+        last_error: Exception | None = None
+
+        for _ in range(max(1, settings.max_provider_attempts)):
+            try:
+                selection = choose(exclude=attempted)
+            except NoProviderAvailable as exc:
+                raise LLMError(str(exc)) from exc
+
+            await self._announce(selection)
+
+            try:
+                response = await self.llm.complete(
+                    messages,
+                    tool_schemas(),
+                    on_token,
+                    model=selection.model,
+                    provider=selection.provider,
+                )
+            except RateLimited as exc:
+                record_rate_limit(selection.provider, retry_after=exc.retry_after)
+                record_usage(
+                    provider=selection.provider,
+                    model=selection.model,
+                    status="rate_limited",
+                    session_id=self.session_id,
+                )
+                attempted.add(selection.provider)
+                last_error = exc
+                audit(
+                    "provider_rate_limited",
+                    session=self.session_id,
+                    provider=selection.provider,
+                    retry_after=exc.retry_after,
+                )
+                continue
+            except LLMError as exc:
+                # Sağlayıcıya özgü bir hata (502, model yok vb.) — onu bu tur
+                # için ele ve sıradakini dene.
+                record_usage(
+                    provider=selection.provider,
+                    model=selection.model,
+                    status="error",
+                    session_id=self.session_id,
+                )
+                attempted.add(selection.provider)
+                last_error = exc
+                audit(
+                    "provider_error",
+                    session=self.session_id,
+                    provider=selection.provider,
+                    error=str(exc)[:300],
+                )
+                continue
+
+            record_usage(
+                provider=selection.provider,
+                model=selection.model,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                latency_ms=response.latency_ms,
+                status="ok",
+                session_id=self.session_id,
+            )
+            return response
+
+        raise LLMError(
+            f"Tüm sağlayıcılar denendi ({', '.join(sorted(attempted)) or 'yok'}), "
+            f"sonuncusu: {last_error}"
+        )
+
+    async def _announce(self, selection: Selection) -> None:
+        """Sağlayıcı değiştiyse UI'da rozet göster (spec §6.1)."""
+        if selection.provider == self.current_provider:
+            return
+        previous = self.current_provider
+        self.current_provider = selection.provider
+        await self.emit(
+            {
+                "type": "model_switch",
+                "provider": selection.provider,
+                "model": selection.model,
+                "previous": previous,
+                "reason": selection.reason,
+                "forced": selection.forced,
+                "rejected": [
+                    {"provider": item.provider, "reason": item.reason}
+                    for item in selection.rejected
+                ],
+                "explanation": selection.explain(),
+            }
+        )
+        audit(
+            "provider_selected",
+            session=self.session_id,
+            provider=selection.provider,
+            previous=previous,
+            explanation=selection.explain(),
+        )
 
     # --- araç çalıştırma --------------------------------------------------
 

@@ -1,4 +1,32 @@
 model_list:
+  # Orchestrator bu soyut adlarla konuşur; hangi sağlayıcının arkada olduğu
+  # sadece burada yaşar (spec §1). Seçimi `config/routing.yaml` + selector yapar.
+  - model_name: chat-groq
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: chat-openrouter
+    litellm_params:
+      model: openrouter/openai/gpt-oss-20b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Model adı canlı denenerek seçildi (2026-08-16), listeye bakarak DEĞİL:
+  #   gemini-2.0-flash      -> dokümanda "Shut down"
+  #   gemini-2.5-flash      -> 404 "no longer available to new users"
+  #   gemini-2.5-flash-lite -> 404 (aynı)
+  #   gemini-3.7-flash      -> 503 "high demand"
+  #   gemini-3.5-flash      -> ÇALIŞIYOR, tool-calling dahil
+  # `models.list` bu adların hepsini döndürüyor ama listelenmiş olmak
+  # çağrılabilir olmak demek değil — bkz. DECISIONS.md "Gemini model adı".
+  # Alias (`gemini-flash-latest`) yerine sabit sürüm: Google'ın kendi tavsiyesi.
+  - model_name: chat-gemini
+    litellm_params:
+      model: gemini/gemini-3.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Faz 1'den kalan takma ad. Seçici devre dışı kalırsa (ya da düz bir test
+  # isteği atılırsa) kullanılan varsayılan.
   - model_name: chat-default
     litellm_params:
       model: openrouter/openai/gpt-oss-20b:free
@@ -9,8 +37,23 @@ general_settings:
 
 litellm_settings:
   drop_params: true
+  # DENENDİ, İŞE YARAMADI: `return_response_headers: true` (LiteLLM 1.97.0)
+  # Groq'un `x-ratelimit-*` header'larını istemciye geçirmiyor — cevapta
+  # sadece `x-litellm-*` var. Bu yüzden Groq penceresi yerel sayaçtan
+  # hesaplanıyor ve panelde "tahmini" yazıyor. Ayarı tekrar eklemeden önce
+  # bkz. DECISIONS.md "Groq header'ları proxy'den geçmiyor".
 
-# NOT: "openai/gpt-oss-20b:free" 2026-08-16'da OpenRouter'ın canlı
-# GET /api/v1/models uç noktasından çekilen ücretsiz modeller arasından
-# seçildi (bkz. DECISIONS.md). Bu liste sık değişir — modeli değiştirmek
-# için sadece `model:` satırını güncelle, orchestrator kodu etkilenmez.
+router_settings:
+  # DİKKAT — LiteLLM'in kendi fallback'i bilinçli olarak KAPALI (spec §8:
+  # "LiteLLM'in fallback'i ile orchestrator'ın kendi seçim mantığı
+  # çakışmasın"). Açık olsaydı 429'u LiteLLM yutup sessizce başka modele
+  # geçerdi; orchestrator 429'u hiç görmez, cooldown işaretleyemez ve kota
+  # sayacı yanlış kalırdı. Sağlayıcı devri Faz 3'te orchestrator'ın işi.
+  num_retries: 0
+
+# NOT: Model isimleri 2026-08-16'da sağlayıcıların canlı dokümanlarından
+# alındı, uydurulmadı (spec §12):
+#   - groq/llama-3.3-70b-versatile   -> console.groq.com/docs/rate-limits
+#   - openai/gpt-oss-20b:free        -> OpenRouter GET /api/v1/models (Faz 1)
+# Ücretsiz model listesi sık değişir; bir model kalkarsa sadece bu dosyadaki
+# `model:` satırı güncellenir, orchestrator kodu etkilenmez.

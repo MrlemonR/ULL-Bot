@@ -1,0 +1,32 @@
+# Görev tipi → model grubu kuralları (spec §5.4).
+#
+# Faz 3 durumu: henüz sınıflandırıcı yok, o yüzden tek bir `default` zinciri
+# var ve her istek onu kullanıyor. Faz 4'te `trivial`, `reasoning`,
+# `long_context`, `code`, `vision` blokları buraya, `default`'un yanına
+# eklenecek — kod zaten "önce task_type'a bak, yoksa default'a düş" diye
+# yazıldı, o yüzden Faz 4 bu dosyayı genişletmekten ibaret olacak.
+#
+# `model` alanları LiteLLM'deki `model_name`'ler (config/litellm.*.yaml).
+# Orchestrator sağlayıcı SDK'sı bilmez, sadece bu soyut adları kullanır.
+
+profiles:
+  desktop:
+    default:
+      # Groq önde: hızlı ve günlük istek limiti geniş.
+      - {provider: groq, model: chat-groq}
+      # OpenRouter: model çeşidi en fazla olan, ama günlük 50 istek (kredi
+      # alınmamış hesapta) — bu yüzden ikinci sırada.
+      - {provider: openrouter, model: chat-openrouter}
+      # Gemini: geniş context, kota bilgisi yalnızca yerel sayaçtan.
+      - {provider: gemini, model: chat-gemini}
+
+  laptop:
+    default:
+      - {provider: groq, model: chat-groq}
+      - {provider: openrouter, model: chat-openrouter}
+      - {provider: gemini, model: chat-gemini}
+
+# Zincirdeki hiçbir sağlayıcı uygun değilse ne yapılacak:
+#   error         -> kullanıcıya hata göster (varsayılan)
+#   force_first   -> kotaya rağmen ilk adayı dene (429 riski göze alınır)
+fallback_behaviour: force_first

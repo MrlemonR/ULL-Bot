@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS provider_state (
   cooldown_until  TEXT,
   last_probe_ts   TEXT,
   probe_payload   TEXT,                 -- ham JSON
-  health          TEXT                  -- ok | degraded | down
+  health          TEXT,                 -- ok | degraded | down
+  note            TEXT                  -- neden: "429", "günlük limit", "kullanıcı kapattı"
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -41,3 +42,8 @@ CREATE TABLE IF NOT EXISTS memory_notes (              -- kalıcı, oturumlar ar
   value      TEXT,
   updated_at TEXT
 );
+
+-- İndeksler en sonda: SQLite betiği sırayla çalıştırır, tablolar önce gelmeli.
+-- Kota sorguları hep (sağlayıcı, zaman) üzerinden gidiyor.
+CREATE INDEX IF NOT EXISTS idx_usage_provider_ts ON usage_events (provider, ts);
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages (session_id, id);

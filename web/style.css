@@ -213,3 +213,102 @@ header h1 { font-size: 1rem; margin: 0; }
 
 .notice-warn { color: var(--warn); border-left-color: var(--warn); }
 .notice-error { color: var(--danger); border-left-color: var(--danger); }
+
+/* --- Faz 3: kota paneli, sağlayıcı devri rozeti, mesaj metası --- */
+
+.switch {
+  align-self: center;
+  font-size: 0.72rem;
+  color: var(--warn);
+  border: 1px dashed var(--warn);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}
+
+.switch-forced { color: var(--danger); border-color: var(--danger); }
+
+.msg-meta {
+  align-self: flex-start;
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-top: -0.5rem;
+}
+
+.quota-toggle, .quota-refresh, .quota-action {
+  font: inherit;
+  font-size: 0.7rem;
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.quota-toggle:hover, .quota-refresh:hover, .quota-action:hover { color: var(--text); }
+
+.quota-panel {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 1rem 0.8rem;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.quota-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+
+.quota-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.5rem;
+}
+
+.quota-card {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  background: var(--panel);
+  font-size: 0.72rem;
+}
+
+.quota-card-off { border-left-color: var(--muted); opacity: 0.75; }
+
+.quota-card-head { display: flex; justify-content: space-between; align-items: baseline; }
+.quota-name { color: var(--text); font-size: 0.8rem; }
+.quota-status-ok { color: var(--ok); }
+.quota-status-off { color: var(--warn); }
+.quota-model { color: var(--muted); margin-bottom: 0.4rem; overflow-wrap: anywhere; }
+
+.quota-window { margin-bottom: 0.4rem; }
+.quota-window-label { display: flex; justify-content: space-between; gap: 0.4rem; color: var(--muted); }
+
+.quota-source {
+  font-size: 0.62rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 0.35rem;
+}
+.quota-source-live { color: var(--ok); border-color: var(--ok); }
+.quota-source-local { color: var(--muted); }
+
+.quota-bar {
+  height: 4px;
+  background: var(--bg);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 0.2rem;
+}
+
+.quota-fill { height: 100%; background: var(--ok); }
+.quota-fill-warn { background: var(--warn); }
+.quota-fill-danger { background: var(--danger); }
+
+.quota-reset { color: var(--muted); font-size: 0.65rem; margin-top: 0.15rem; }
+.quota-reason { color: var(--warn); margin: 0.3rem 0; }
+.quota-action { margin-top: 0.3rem; width: 100%; }

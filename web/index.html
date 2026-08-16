@@ -10,9 +10,17 @@
   <main class="chat">
     <header>
       <h1>ULL-Bot</h1>
-      <span class="subtitle">Faz 2 — araçlar ve güvenlik</span>
+      <span class="subtitle">Faz 3 — çoklu sağlayıcı</span>
       <span id="status-badges" class="badges"></span>
+      <button id="quota-toggle" class="quota-toggle" type="button" title="Kota paneli">kota</button>
     </header>
+    <section id="quota-panel" class="quota-panel" hidden>
+      <div class="quota-head">
+        <span>Sağlayıcı kotaları</span>
+        <button id="quota-probe" type="button" class="quota-refresh">canlı sorgula</button>
+      </div>
+      <div id="quota-cards" class="quota-cards"></div>
+    </section>
     <div id="chat-log" class="log"></div>
     <form id="chat-form" class="composer">
       <input id="chat-input" type="text" placeholder="Bir mesaj yaz..." autocomplete="off" />

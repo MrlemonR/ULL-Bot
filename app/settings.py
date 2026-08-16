@@ -13,6 +13,21 @@ class Settings(BaseSettings):
     litellm_master_key: str = ""
     litellm_model: str = "chat-default"
 
+    # Sağlayıcı anahtarları. Orchestrator bunlarla istek atmaz (istekler
+    # LiteLLM'den geçer) — sadece "bu sağlayıcı yapılandırılmış mı?" sorusuna
+    # cevap vermek ve OpenRouter probe'unu çalıştırmak için okunur.
+    openrouter_api_key: str = ""
+    groq_api_key: str = ""
+    gemini_api_key: str = ""
+    cerebras_api_key: str = ""
+    mistral_api_key: str = ""
+
+    def api_key_for(self, provider: str) -> str:
+        """Sağlayıcının anahtarı (yoksa boş). Anahtarsız sağlayıcılar için 'local'."""
+        if provider in {"ollama", "local"}:
+            return "local"
+        return str(getattr(self, f"{provider}_api_key", "") or "").strip()
+
     db_path: str = ""
 
     # --- Faz 2: ajan ve güvenlik ---
@@ -24,6 +39,13 @@ class Settings(BaseSettings):
     # Araç çıktısı bu uzunluğu aşarsa ortadan kırpılır (spec §6.1/4c).
     tool_output_limit: int = 4000
     shell_timeout_seconds: int = 30
+
+    # --- Faz 3: çoklu sağlayıcı ve kota ---
+    # Kotanın bu oranı acil işler için saklanır; 0 ise quotas.yaml'daki değer
+    # kullanılır (spec §5.3).
+    reserve_ratio: float = 0.0
+    # Bir tur içinde en fazla kaç farklı sağlayıcı denenir (429 sonrası devir).
+    max_provider_attempts: int = 3
 
     @property
     def data_dir(self) -> Path:

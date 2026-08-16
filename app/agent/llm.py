@@ -1,13 +1,16 @@
-"""LiteLLM proxy istemcisi: streaming + tool call biriktirme.
+"""LiteLLM proxy istemcisi: streaming, tool call biriktirme, kota sinyalleri.
 
 Orchestrator sağlayıcıdan habersiz kalır (spec §1) — burada sadece
 OpenAI-uyumlu `/chat/completions` konuşulur, hangi modelin arkasında kim
-olduğu `config/litellm.*.yaml` işidir.
+olduğu `config/litellm.*.yaml` işidir. İstemcinin sağlayıcı hakkında bildiği
+tek şey, çağıranın verdiği `provider` etiketi: kota sayacına ve 429
+işaretine yazmak için gerekiyor.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
@@ -39,10 +42,23 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     model: str = ""
     finish_reason: str = ""
+    provider: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    latency_ms: int = 0
 
 
 class LLMError(RuntimeError):
     pass
+
+
+class RateLimited(LLMError):
+    """429 — sağlayıcı limiti doldu. `retry_after` varsa cooldown süresi."""
+
+    def __init__(self, message: str, *, provider: str = "", retry_after: str | None = None) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.retry_after = retry_after
 
 
 class LLMClient(Protocol):
@@ -51,6 +67,9 @@ class LLMClient(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         on_token: TokenCallback,
+        *,
+        model: str | None = None,
+        provider: str = "",
     ) -> LLMResponse: ...
 
 
@@ -72,18 +91,26 @@ class LiteLLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         on_token: TokenCallback,
+        *,
+        model: str | None = None,
+        provider: str = "",
     ) -> LLMResponse:
+        chosen_model = model or self.model
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": chosen_model,
             "messages": messages,
             "stream": True,
+            # Son chunk'ta token sayımını da iste — kota sayacı buna dayanıyor.
+            # Desteklemeyen sağlayıcıda LiteLLM `drop_params` ile atıyor.
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
-        response = LLMResponse(model=self.model)
+        response = LLMResponse(model=chosen_model, provider=provider)
         pending: dict[int, ToolCall] = {}
+        started = time.monotonic()
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             async with client.stream(
@@ -92,9 +119,19 @@ class LiteLLMClient:
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json=payload,
             ) as resp:
+                if resp.status_code == 429:
+                    body = (await resp.aread()).decode("utf-8", errors="replace")
+                    raise RateLimited(
+                        f"LiteLLM 429: {body[:300]}",
+                        provider=provider,
+                        retry_after=resp.headers.get("retry-after"),
+                    )
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode("utf-8", errors="replace")
                     raise LLMError(f"LiteLLM {resp.status_code}: {body[:500]}")
+
+                self._record_headers(provider, resp.headers)
+
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -105,8 +142,16 @@ class LiteLLMClient:
                         chunk = json.loads(raw)
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(chunk, dict) and chunk.get("error"):
+                    if not isinstance(chunk, dict):
+                        continue
+                    if chunk.get("error"):
                         raise LLMError(str(chunk["error"])[:500])
+
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict):
+                        response.prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                        response.completion_tokens = int(usage.get("completion_tokens") or 0)
+
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -131,10 +176,20 @@ class LiteLLMClient:
                         if function.get("arguments"):
                             call.arguments += function["arguments"]
 
-        response.tool_calls = [
-            call for _, call in sorted(pending.items()) if call.name
-        ]
+        response.latency_ms = int((time.monotonic() - started) * 1000)
+        response.tool_calls = [call for _, call in sorted(pending.items()) if call.name]
         for position, call in enumerate(response.tool_calls):
             if not call.id:
                 call.id = f"call_{position}"
         return response
+
+    def _record_headers(self, provider: str, headers: Any) -> None:
+        """Sağlayıcının kota header'larını sakla — sayacı düzeltmek için."""
+        if not provider:
+            return
+        try:
+            from app.quota.probes import record_response_headers
+
+            record_response_headers(provider, dict(headers))
+        except Exception:  # kota kaydı sohbeti düşürmemeli
+            pass

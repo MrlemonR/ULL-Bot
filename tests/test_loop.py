@@ -21,12 +21,19 @@ class FakeLLM:
     def __init__(self, *responses: LLMResponse) -> None:
         self.responses = list(responses)
         self.seen_messages: list[list[dict[str, Any]]] = []
+        self.seen_models: list[str] = []
         self.calls = 0
 
-    async def complete(self, messages, tools, on_token) -> LLMResponse:
+    async def complete(
+        self, messages, tools, on_token, *, model: str | None = None, provider: str = ""
+    ) -> LLMResponse:
         self.calls += 1
         self.seen_messages.append([dict(m) for m in messages])
+        self.seen_models.append(model or "")
         response = self.responses.pop(0) if self.responses else LLMResponse(content="bitti")
+        if isinstance(response, Exception):
+            raise response  # testler 429/hata senaryosunu böyle kuruyor
+        response.provider = provider
         if response.content:
             await on_token(response.content)
         return response

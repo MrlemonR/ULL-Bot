@@ -1,0 +1,78 @@
+# Sağlayıcı kotaları (spec §4.3).
+#
+# ÖNEMLİ: Buradaki sayılar 2026-08-16'da sağlayıcıların CANLI dokümanlarından
+# çekildi, uydurulmadı. Limitler sık değişir — kaynak linkler her bloğun
+# başında, doğrulamak için oraya bak. Kodda sabit sayı YOK (spec §12).
+#
+# `max_requests: null` = sağlayıcı bu sayıyı yayınlamıyor demek. Boş bırakmak
+# bilinçli: uydurulmuş bir sayı, sayı olmamasından daha tehlikeli. Bu durumda
+# yerel sayaç yine de kullanımı biriktirir, sadece "ne kadar kaldı" yüzdesi
+# hesaplanamaz.
+
+providers:
+  # https://openrouter.ai/docs/api-reference/limits
+  # ":free" sonekli modeller: 20 istek/dakika, 50 istek/gün.
+  # Hesap ömür boyu 10$ kredi satın aldıysa günlük limit 1000'e çıkıyor —
+  # `is_free_tier` alanı bunu söylüyor, probe otomatik yükseltir.
+  openrouter:
+    probe: openrouter_key_endpoint
+    limits:
+      - window: minute
+        max_requests: 20
+      - window: day
+        max_requests: 50
+        max_requests_if_funded: 1000
+    # NOT: OpenRouter reset saatini dokümante etmiyor. UTC gece yarısı
+    # varsayıldı, ama bu varsayım kritik değil: probe (`usage_daily`)
+    # otorite kabul edilir ve yerel sayacı düzeltir (spec §4.2).
+    reset: rolling_utc_midnight
+    reset_verified: false
+
+  # https://console.groq.com/docs/rate-limits
+  # Limitler MODEL BAŞINA. Aşağıdakiler llama-3.3-70b-versatile içindir;
+  # başka modele geçilirse bu bloğun güncellenmesi gerekir.
+  # (llama-3.1-8b-instant: 30 RPM / 14400 RPD / 6K TPM / 500K TPD)
+  groq:
+    probe: response_headers
+    model_note: "llama-3.3-70b-versatile"
+    limits:
+      - window: minute
+        max_requests: 30
+        max_tokens: 12000
+      - window: day
+        max_requests: 1000
+        max_tokens: 100000
+    reset: rolling
+    reset_verified: true
+
+  # https://ai.google.dev/gemini-api/docs/rate-limits
+  # Google artık ücretsiz katman sayılarını dokümanda yayınlamıyor; limitler
+  # hesaba özel ve https://aistudio.google.com/rate-limit adresinden okunuyor.
+  # Spec §12 gereği uydurulmadı — null bırakıldı, README'de nereden
+  # doldurulacağı yazıyor.
+  gemini:
+    probe: local_only
+    limits:
+      - window: minute
+        max_requests: null
+        max_tokens: null
+      - window: day
+        max_requests: null
+    # Doğrulandı: "Requests per day (RPD) quotas reset at midnight Pacific time."
+    reset: pacific_midnight
+    reset_verified: true
+
+  # Local model — kota yok, sadece VRAM sınırı (Faz 5).
+  ollama:
+    probe: none
+    limits: []
+    reset: rolling
+    reset_verified: true
+
+# Kotanın bu oranı acil işler için saklanır: kalan < reserve_ratio * limit
+# olduğunda sağlayıcı proaktif olarak elenir (spec §5.3). .env'deki
+# RESERVE_RATIO bunu ezer.
+reserve_ratio: 0.1
+
+# 429 alındığında Retry-After header'ı yoksa uygulanacak varsayılan bekleme.
+default_cooldown_seconds: 60

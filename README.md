@@ -5,7 +5,7 @@ your machine (files, commands, web lookups). For the full spec see
 [ORCHESTRATOR_SPEC.md](./ORCHESTRATOR_SPEC.md) (written in Turkish), and for
 implementation decisions made along the way see [DECISIONS.md](./DECISIONS.md).
 
-Current status: **Phase 2 — tools + safety** (see spec §9).
+Current status: **Phase 3 — multi-provider + quota tracking** (see spec §9).
 
 ## Setup
 
@@ -16,9 +16,16 @@ cp .env.example .env
 
 Fill in at least these in `.env`:
 
-- `OPENROUTER_API_KEY` — get one for free at https://openrouter.ai/keys
 - `LITELLM_MASTER_KEY` — any string you pick as a local password for the
   LiteLLM proxy (replace the `changeme-local-key` placeholder).
+- At least one provider key. All three are free and none asks for a card:
+  - `OPENROUTER_API_KEY` — https://openrouter.ai/keys
+  - `GROQ_API_KEY` — https://console.groq.com/keys
+  - `GEMINI_API_KEY` — https://aistudio.google.com/apikey
+
+A provider with no key is dropped from the candidate list before any request is
+made (there is no point collecting a 401), so starting with one key works fine —
+you just don't get failover until you add a second.
 
 ## Running it
 
@@ -56,6 +63,53 @@ Open http://localhost:8080 and send a message. The chat runs over a WebSocket
 
 Every call goes through the safety policy first, and every call is written to
 the audit log.
+
+## Providers and quota
+
+Three free providers are wired up. `config/routing.yaml` holds the order they
+are tried in; `config/litellm.<profile>.yaml` maps each abstract name to a real
+model. The orchestrator never names a provider SDK — it only knows `chat-groq`,
+`chat-openrouter`, `chat-gemini`.
+
+| Provider | Model | Free limits (2026-08-16) | Where the numbers come from |
+|---|---|---|---|
+| Groq | `llama-3.3-70b-versatile` | 30 req/min, 12K tok/min, 1000 req/day | published docs (local counting — see below) |
+| OpenRouter | `openai/gpt-oss-20b:free` | 20 req/min, 50 req/day (1000 if the account ever bought $10 of credit) | published docs + `GET /api/v1/key` probe |
+| Gemini | `gemini-3.5-flash` | **not published** — per-account | local counter only |
+
+Google no longer publishes free-tier numbers; they are per account and readable
+at https://aistudio.google.com/rate-limit. They are deliberately left `null` in
+`config/quotas.yaml` rather than guessed (spec §12) — usage is still counted,
+you just don't get a "% remaining" bar until you fill them in.
+
+**How a provider is picked.** For each candidate in the chain: no API key →
+skipped; manually disabled → skipped; in cooldown after a 429 → skipped;
+remaining quota below `RESERVE_RATIO` of the limit → skipped. The first survivor
+wins. If nobody survives, `fallback_behaviour` in `routing.yaml` decides —
+`force_first` tries the head of the chain anyway, `error` shows an error.
+
+**On a 429.** The provider gets a cooldown (from `Retry-After`, or
+`default_cooldown_seconds`), is excluded for the rest of this turn, and the
+turn continues on the next provider — up to `MAX_PROVIDER_ATTEMPTS`. The switch
+is not silent: the chat shows which provider it moved to, why the previous one
+was dropped, and which candidates were rejected on the way.
+
+**Counting.** Every call writes a row to `usage_events` (provider, model,
+tokens, latency, status), including the failed ones — a 429 consumed a request
+even though it produced no answer. Token counts come from
+`stream_options.include_usage`, so streaming doesn't blind the counter. Live
+probe data, when it is fresher than 15 minutes, overrides the local count; the
+quota panel labels each window `canlı` or `tahmini` so you can tell which you
+are looking at.
+
+In practice only OpenRouter reports `canlı` today: LiteLLM does not forward
+Groq's `x-ratelimit-*` headers to the client (tested on 1.97.0), so Groq is
+counted locally too. That only loses visibility into usage of the same key by
+*other* apps — hitting the real limit still produces a 429 and a cooldown.
+
+**The panel.** The `kota` button in the header opens it: per provider, a bar per
+window, the reset time, and a disable/enable button. `canlı sorgula` forces a
+probe. `GET /api/quota?probe=true` returns the same data as JSON.
 
 ## Safety model
 
@@ -111,13 +165,22 @@ shell calls are escalated to `confirm` even when they look harmless.
 
 ## Configuration
 
-Everything lives in `.env` (see `.env.example`). Phase 2 knobs:
+Everything lives in `.env` (see `.env.example`).
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `WORKSPACE_ROOT` | `~/Projects` | Agent's working directory; always allowed |
 | `DRY_RUN` | `true` | Report writes instead of doing them |
 | `MAX_AGENT_STEPS` | `15` | Tool-loop step limit before asking to continue |
+| `APPROVAL_TIMEOUT_SECONDS` | `300` | Unanswered approval counts as **denied** |
+| `TOOL_OUTPUT_LIMIT` | `4000` | Tool output is truncated in the middle past this |
+| `SHELL_TIMEOUT_SECONDS` | `30` | Per-command timeout |
+| `RESERVE_RATIO` | `0.1` | Reserve share of a quota; below it a provider is dropped before a 429 |
+| `MAX_PROVIDER_ATTEMPTS` | `3` | How many providers one turn may try after 429s |
+
+The quota numbers themselves are not env vars — they live in
+`config/quotas.yaml` with a source link and a date next to each block, because
+they change on the provider's schedule, not yours.
 
 ## Tests
 
@@ -127,8 +190,10 @@ uv run pytest
 
 Covers the safety policy (every blocked pattern, obfuscation, path traversal,
 symlink escape), the tools, the agent loop (step limit, output truncation,
-approval flow) and prompt injection — including a test where the model
-deliberately obeys an injected `rm -rf ~` and the policy stops it.
+approval flow), prompt injection — including a test where the model
+deliberately obeys an injected `rm -rf ~` and the policy stops it — and the
+phase 3 additions: window maths for all three reset styles, header parsing,
+cooldowns, and provider selection including the 429-mid-turn switch.
 
 ## Why Docker isn't required
 
@@ -148,8 +213,8 @@ SQLite is written to a platform-appropriate data directory by default
 
 - [x] Phase 1 — skeleton + single provider
 - [x] Phase 2 — tools + safety
-- [ ] Phase 3 — multi-provider + quota tracking
-- [ ] Phase 4 — router
+- [x] Phase 3 — multi-provider + quota tracking
+- [ ] Phase 4 — router (task classification: trivial / reasoning / code / …)
 - [ ] Phase 5 — local model
 - [ ] Phase 6 — profiles (desktop/laptop)
 - [ ] Phase 7 — polish
