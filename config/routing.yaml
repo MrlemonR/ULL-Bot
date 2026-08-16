@@ -1,13 +1,21 @@
 # Görev tipi → model grubu kuralları (spec §5.4).
 #
-# Faz 3 durumu: henüz sınıflandırıcı yok, o yüzden tek bir `default` zinciri
-# var ve her istek onu kullanıyor. Faz 4'te `trivial`, `reasoning`,
-# `long_context`, `code`, `vision` blokları buraya, `default`'un yanına
-# eklenecek — kod zaten "önce task_type'a bak, yoksa default'a düş" diye
-# yazıldı, o yüzden Faz 4 bu dosyayı genişletmekten ibaret olacak.
+# Faz 4: `app/router/classifier.py` her kullanıcı mesajını bir `task_type`e
+# sokuyor (`trivial`, `tool_use`, `reasoning`, `long_context`, `code`,
+# `vision`); `AgentLoop` bunu `selector.choose(task_type=...)`e veriyor.
+# `task_type` altında blok yoksa `default`'a düşülüyor (`selector.py`
+# `RoutingConfig.chain`) — o yüzden `default` hâlâ duruyor, dokunulmadı.
+#
+# `classification` için ayrı bir blok YOK: spec §5.1 bunu "local (her
+# zaman)" diye tarif ediyor ama sınıflandırıcı hiç LLM çağırmıyor (bkz.
+# classifier.py docstring, DECISIONS.md "Sınıflandırıcı kural tabanlı, LLM
+# değil"), o yüzden yönlendirilecek bir model çağrısı yok.
 #
 # `model` alanları LiteLLM'deki `model_name`'ler (config/litellm.*.yaml).
 # Orchestrator sağlayıcı SDK'sı bilmez, sadece bu soyut adları kullanır.
+#
+# `local`/`ollama` adayları henüz yok (Faz 5) — spec'in "local → groq" gibi
+# zincirlerinde local basamağı bilerek atlandı; Faz 5'te bu dosyaya eklenecek.
 
 profiles:
   desktop:
@@ -20,10 +28,74 @@ profiles:
       # Gemini: geniş context, kota bilgisi yalnızca yerel sayaçtan.
       - {provider: gemini, model: chat-gemini}
 
+    # "Saat kaç", "merhaba" gibi kısa/fiilsiz istekler — spec §9 Faz 4 kabul
+    # kriteri tam bu. `gemini_lite` (flash-lite, günde 500 istek) önde:
+    # Faz 3'ün ilk somut kazancı (bkz. DECISIONS.md "Gemini'nin iki modeli").
+    # Groq yedek — flash-lite kotası da (nadiren) tükenirse.
+    trivial:
+      - {provider: gemini_lite, model: chat-gemini-lite}
+      - {provider: groq, model: chat-groq}
+
+    # Ajan döngüsünün ara adımları (tool sonucu değerlendirme). Groq hızlı
+    # ve zaten tool-calling'de sorunsuz çalışıyor (bkz. bilinen tool_use_failed
+    # notu, NEXT_PHASE.md §5) — ara adımlar için en ucuz/hızlı seçenek.
+    tool_use:
+      - {provider: groq, model: chat-groq}
+      - {provider: openrouter, model: chat-openrouter}
+
+    # Planlama, çok adımlı düşünme, analiz. OpenRouter'ın büyük ücretsiz
+    # modeli önde (spec tablosu), Gemini yedek.
+    reasoning:
+      - {provider: openrouter, model: chat-openrouter}
+      - {provider: gemini, model: chat-gemini}
+
+    # Uzun döküman/log özetleme. Gemini'nin geniş context penceresi (250K
+    # TPM) önde; OpenRouter yedek.
+    long_context:
+      - {provider: gemini, model: chat-gemini}
+      - {provider: openrouter, model: chat-openrouter}
+
+    # Script yazma/düzeltme. OpenRouter önde (spec tablosu), Groq yedek.
+    code:
+      - {provider: openrouter, model: chat-openrouter}
+      - {provider: groq, model: chat-groq}
+
+    # Görsel/ekran görüntüsü yorumlama. Şu an TEK aday: Gemini multimodal
+    # destekliyor. Spec'in önerdiği ikinci aday (vision destekli bir
+    # OpenRouter modeli) canlı doğrulanmadan eklenmedi (spec §12) — henüz bir
+    # görsel eki özelliği de yok (bkz. classifier.py `has_image`, şu an hep
+    # `False`). Görsel ekler eklendiğinde önce ikinci aday live-test edilmeli.
+    vision:
+      - {provider: gemini, model: chat-gemini}
+
   laptop:
     default:
       - {provider: groq, model: chat-groq}
       - {provider: openrouter, model: chat-openrouter}
+      - {provider: gemini, model: chat-gemini}
+
+    # Laptop'ta da local yok (Faz 5/6 bekliyor) — desktop'la aynı zincir.
+    trivial:
+      - {provider: gemini_lite, model: chat-gemini-lite}
+      - {provider: groq, model: chat-groq}
+
+    tool_use:
+      - {provider: groq, model: chat-groq}
+      - {provider: openrouter, model: chat-openrouter}
+
+    reasoning:
+      - {provider: openrouter, model: chat-openrouter}
+      - {provider: gemini, model: chat-gemini}
+
+    long_context:
+      - {provider: gemini, model: chat-gemini}
+      - {provider: openrouter, model: chat-openrouter}
+
+    code:
+      - {provider: openrouter, model: chat-openrouter}
+      - {provider: groq, model: chat-groq}
+
+    vision:
       - {provider: gemini, model: chat-gemini}
 
 # Zincirdeki hiçbir sağlayıcı uygun değilse ne yapılacak:

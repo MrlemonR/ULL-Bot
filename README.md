@@ -4,6 +4,8 @@ A personal agent that runs entirely on free-tier LLM providers and can act on
 your machine (files, commands, web lookups). For the full spec see
 [ORCHESTRATOR_SPEC.md](./ORCHESTRATOR_SPEC.md) (written in Turkish), and for
 implementation decisions made along the way see [DECISIONS.md](./DECISIONS.md).
+Picking the work back up in a fresh session? Start at
+[NEXT_PHASE.md](./NEXT_PHASE.md).
 
 Current status: **Phase 3 — multi-provider + quota tracking** (see spec §9).
 
@@ -78,9 +80,11 @@ model. The orchestrator never names a provider SDK — it only knows `chat-groq`
 | Gemini | `gemini-3.5-flash` | **not published** — per-account | local counter only |
 
 Google no longer publishes free-tier numbers; they are per account and readable
-at https://aistudio.google.com/rate-limit. They are deliberately left `null` in
-`config/quotas.yaml` rather than guessed (spec §12) — usage is still counted,
-you just don't get a "% remaining" bar until you fill them in.
+at https://aistudio.google.com/rate-limit. The values in `config/quotas.yaml`
+were read off that page rather than guessed (spec §12) — if you use a different
+account, replace them. Note how tight Gemini is: 20 requests a *day* on
+`3.5-flash`. `3.5-flash-lite` allows 500, which is what phase 4's task routing
+is for.
 
 **How a provider is picked.** For each candidate in the chain: no API key →
 skipped; manually disabled → skipped; in cooldown after a 429 → skipped;

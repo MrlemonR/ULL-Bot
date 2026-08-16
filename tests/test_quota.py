@@ -10,6 +10,8 @@ import pytest
 from app.quota import state as state_module
 from app.quota.models import (
     Limit,
+    ProviderQuota,
+    QuotaConfig,
     WindowUsage,
     get_quota_config,
     window_reset_at,
@@ -165,12 +167,30 @@ def test_reserve_ratio_is_the_elimination_threshold(workspace: Path) -> None:
 
 
 def test_unknown_limits_never_eliminate_a_provider(workspace: Path) -> None:
-    """Gemini limitlerini yayınlamıyor (null) — bilmediğimiz limit yüzünden elemeyiz."""
+    """Limitini yayınlamayan sağlayıcı, bilmediğimiz limit yüzünden elenmez.
+
+    Sağlayıcı adı config'den bağımsız olsun diye sentetik bir config kuruluyor:
+    gerçek `quotas.yaml`'da bugün null olan bir sağlayıcı yarın doldurulabilir
+    (Gemini'ye tam bu oldu) ve test o gün yanlış sebeple kırılmamalı.
+    """
     now = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+    config = QuotaConfig(
+        providers={
+            "gizli": ProviderQuota(
+                name="gizli",
+                probe="local_only",
+                limits=(
+                    Limit(window="minute", max_requests=None),
+                    Limit(window="day", max_requests=None),
+                ),
+                reset="rolling",
+            )
+        }
+    )
     for _ in range(500):
-        record_usage(provider="gemini", model="m", ts=now)
-    assert free_ratio("gemini", now=now) == 1.0
-    assert has_capacity("gemini", now=now)
+        record_usage(provider="gizli", model="m", ts=now)
+    assert free_ratio("gizli", config=config, now=now) == 1.0
+    assert has_capacity("gizli", config=config, now=now)
 
 
 def test_window_usage_helpers() -> None:
@@ -350,6 +370,12 @@ def test_quota_config_numbers_come_from_yaml(workspace: Path) -> None:
     day = openrouter.limit_for("day")
     assert day.max_requests == 50 and day.max_requests_if_funded == 1000
 
+    # Gemini'nin sayıları Google'ın dokümanından değil, kullanıcının kendi
+    # AI Studio panelinden geldi (2026-08-16) — hesaba özel oldukları için.
     gemini = config.get("gemini")
     assert gemini.reset == "pacific_midnight"
-    assert gemini.limit_for("day").max_requests is None, "yayınlanmayan limit null kalmalı"
+    assert gemini.limit_for("day").max_requests == 20
+    minute = gemini.limit_for("minute")
+    assert minute.max_requests == 5 and minute.max_tokens == 250_000
+    # Panelde TPD yok — bilinmeyen hâlâ null kalmalı, sıfır ya da tahmin değil.
+    assert gemini.limit_for("day").max_tokens is None

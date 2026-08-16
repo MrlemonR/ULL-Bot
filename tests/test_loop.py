@@ -65,6 +65,16 @@ class Recorder:
 
 
 def build(workspace: Path, llm: FakeLLM, rec: Recorder, **kwargs) -> AgentLoop:
+    """Testler `task_type`i zorlar (`"default"`) — aksi hâlde her testin mesajı
+
+    gerçek sınıflandırıcıdan geçip farklı bir görev tipi zincirine düşerdi ve
+    bu dosyadaki testler (sağlayıcı devri, adım limiti, onay akışı vb.)
+    sınıflandırmayla ilgisiz oldukları hâlde kırılgan olurdu. Sınıflandırmanın
+    kendisi `tests/test_classifier.py`de, döngüye kablolanışı ise
+    `test_loop_uses_classified_task_type` gibi adı geçen testlerde ayrıca
+    sınanıyor.
+    """
+    kwargs.setdefault("task_type", "default")
     return AgentLoop(
         session_id="s-test",
         llm=llm,
@@ -275,3 +285,65 @@ async def test_tool_messages_are_paired_with_their_call(workspace: Path) -> None
     tool_message = second_call[assistant_index + 1]
     assert tool_message["role"] == "tool"
     assert tool_message["tool_call_id"] == second_call[assistant_index]["tool_calls"][0]["id"]
+
+
+# --- Faz 4: sınıflandırıcının döngüye bağlanması --------------------------
+
+
+async def test_first_step_uses_classified_task_type(workspace: Path, all_providers) -> None:
+    """"merhaba" trivial'e sınıflanır → trivial zincirinin ilk adayı seçilir
+
+    (spec §9 Faz 4 kabul kriteri). `task_type` burada zorlanmıyor — gerçek
+    sınıflandırıcı çalışıyor.
+    """
+    llm = FakeLLM(LLMResponse(content="selam"))
+    rec = Recorder()
+    agent = AgentLoop(
+        session_id="s-classified",
+        llm=llm,
+        emit=rec.emit,
+        approve=rec.approve,
+        cwd=workspace,
+        dry_run=False,
+    )
+    await agent.run("merhaba")
+
+    classifications = rec.of_type("classification")
+    assert classifications and classifications[0]["task_type"] == "trivial"
+
+    from app.router.selector import get_routing_config
+
+    trivial_first = get_routing_config().chain("desktop", "trivial")[0]
+    switches = rec.of_type("model_switch")
+    assert switches[0]["provider"] == trivial_first.provider
+
+
+async def test_tool_step_uses_tool_use_task_type(workspace: Path, all_providers) -> None:
+    """Ara adım (tool sonucu değerlendirme) her zaman `tool_use`e gider,
+
+    ilk mesajın sınıflandırmasından bağımsız (spec §5.1/§5.2).
+    """
+    (workspace / "a.txt").write_text("x", encoding="utf-8")
+    llm = FakeLLM(
+        tool_response("list_dir", path=str(workspace)),
+        LLMResponse(content="bitti"),
+    )
+    rec = Recorder()
+    agent = AgentLoop(
+        session_id="s-classified-2",
+        llm=llm,
+        emit=rec.emit,
+        approve=rec.approve,
+        cwd=workspace,
+        dry_run=False,
+    )
+    await agent.run("listele lütfen bunu")
+
+    from app.router.selector import get_routing_config
+
+    tool_use_first = get_routing_config().chain("desktop", "tool_use")[0]
+    switches = rec.of_type("model_switch")
+    # İkinci adımda (tool sonucu değerlendirme) sağlayıcı hâlâ aynıysa rozet
+    # tekrar basılmaz; asıl kanıt ikinci LLM çağrısında hangi modelin
+    # kullanıldığı.
+    assert llm.seen_models[-1] == tool_use_first.model

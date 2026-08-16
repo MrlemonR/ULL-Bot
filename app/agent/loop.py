@@ -20,6 +20,7 @@ from app.agent.tools.base import ToolContext, ToolResult
 from app.memory.store import ensure_session, load_history, save_message
 from app.quota.probes import record_rate_limit
 from app.quota.tracker import record_usage
+from app.router.classifier import Classification, classify_cached
 from app.router.selector import NoProviderAvailable, Selection, choose
 from app.safety.audit import audit
 from app.settings import settings
@@ -48,6 +49,7 @@ class AgentLoop:
         cwd: Path | None = None,
         max_steps: int | None = None,
         dry_run: bool | None = None,
+        task_type: str | None = None,
     ) -> None:
         self.session_id = session_id
         self.llm = llm or LiteLLMClient()
@@ -62,6 +64,11 @@ class AgentLoop:
         self.steps_used = 0
         # Bu oturumda hâlâ hangi sağlayıcıyı kullanıyoruz (model devri rozeti için).
         self.current_provider: str = ""
+        # Bu turun görev tipi (spec §5.1) — `run()` başında bir kere belirlenir.
+        self.turn_task_type: str = "default"
+        # Testler/harici çağıranlar için: verilirse sınıflandırıcı hiç
+        # çalışmaz, bu tip zorlanır. Üretimde kullanılmaz (`None` kalır).
+        self._forced_task_type = task_type
 
     # --- ana döngü --------------------------------------------------------
 
@@ -74,12 +81,29 @@ class AgentLoop:
         messages.append({"role": "user", "content": user_message})
         save_message(self.session_id, "user", user_message)
 
+        if self._forced_task_type is not None:
+            classification = Classification(
+                self._forced_task_type, 1.0, "zorlandı (test/harici override)"
+            )
+        else:
+            classification = classify_cached(self.session_id, user_message)
+        self.turn_task_type = classification.task_type
+        await self.emit(
+            {
+                "type": "classification",
+                "task_type": classification.task_type,
+                "confidence": classification.confidence,
+                "reason": classification.reason,
+            }
+        )
+
         audit(
             "turn_start",
             session=self.session_id,
             dry_run=self.ctx.dry_run,
             cwd=str(self.ctx.cwd),
             message=user_message[:500],
+            task_type=classification.task_type,
         )
 
         budget = self.max_steps
@@ -92,8 +116,13 @@ class AgentLoop:
             async def on_token(text: str) -> None:
                 await self.emit({"type": "token", "content": text})
 
+            # İlk adım turun sınıflandırmasını kullanır; sonraki adımlar
+            # ajan döngüsünün ara adımıdır (tool sonucu değerlendirme) —
+            # spec §5.1/§5.2: bu her zaman `tool_use`.
+            step_task_type = self.turn_task_type if self.steps_used == 1 else "tool_use"
+
             try:
-                response = await self._call_model(messages, on_token)
+                response = await self._call_model(messages, on_token, step_task_type)
             except LLMError as exc:
                 await self.emit({"type": "error", "message": str(exc)})
                 audit("llm_error", session=self.session_id, error=str(exc)[:500])
@@ -183,20 +212,26 @@ class AgentLoop:
 
     # --- model çağrısı ve sağlayıcı devri ---------------------------------
 
-    async def _call_model(self, messages: list[dict[str, Any]], on_token) -> Any:
+    async def _call_model(
+        self, messages: list[dict[str, Any]], on_token, task_type: str = "default"
+    ) -> Any:
         """Sağlayıcı seç, çağır, 429 alırsan sessizce bir sonrakine geç.
 
         Spec §9 Faz 3 kabul kriteri: "bir sağlayıcının limitini kasten doldur;
         sistem sessizce diğerine geçsin ve UI'da sebebi görünsün." Sessizce =
         kullanıcıya hata gösterilmez; "UI'da sebebi görünür" = `model_switch`
         olayı gönderilir.
+
+        Faz 4: `task_type` görev tipine göre zinciri belirler; o zincir yine
+        kota/cooldown süzgecinden geçer (spec §9 Faz 4 kabul notu — görev
+        tipi seçimi elemenin ÜSTÜNE değil, ALTINA eklenir).
         """
         attempted: set[str] = set()
         last_error: Exception | None = None
 
         for _ in range(max(1, settings.max_provider_attempts)):
             try:
-                selection = choose(exclude=attempted)
+                selection = choose(task_type=task_type, exclude=attempted)
             except NoProviderAvailable as exc:
                 raise LLMError(str(exc)) from exc
 
@@ -217,6 +252,7 @@ class AgentLoop:
                     model=selection.model,
                     status="rate_limited",
                     session_id=self.session_id,
+                    task_type=task_type,
                 )
                 attempted.add(selection.provider)
                 last_error = exc
@@ -235,6 +271,7 @@ class AgentLoop:
                     model=selection.model,
                     status="error",
                     session_id=self.session_id,
+                    task_type=task_type,
                 )
                 attempted.add(selection.provider)
                 last_error = exc
@@ -254,6 +291,7 @@ class AgentLoop:
                 latency_ms=response.latency_ms,
                 status="ok",
                 session_id=self.session_id,
+                task_type=task_type,
             )
             return response
 

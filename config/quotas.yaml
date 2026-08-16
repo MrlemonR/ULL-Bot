@@ -46,19 +46,46 @@ providers:
     reset_verified: true
 
   # https://ai.google.dev/gemini-api/docs/rate-limits
-  # Google artık ücretsiz katman sayılarını dokümanda yayınlamıyor; limitler
-  # hesaba özel ve https://aistudio.google.com/rate-limit adresinden okunuyor.
-  # Spec §12 gereği uydurulmadı — null bırakıldı, README'de nereden
-  # doldurulacağı yazıyor.
+  # Google ücretsiz katman sayılarını dokümanda YAYINLAMIYOR; limitler hesaba
+  # özel ve https://aistudio.google.com/rate-limit adresinden okunuyor.
+  # Aşağıdakiler 2026-08-16'da bu hesabın kendi panelinden okundu (uydurma
+  # değil, spec §12). Limitler MODEL BAŞINA — bunlar gemini-3.5-flash içindir:
+  #   gemini-3.5-flash       ->  5 RPM / 250K TPM /  20 RPD
+  #   gemini-3.7-flash       ->  5 RPM / 250K TPM /  20 RPD
+  #   gemini-3.5-flash-lite  -> 15 RPM / 250K TPM / 500 RPD
+  # Başka modele geçilirse bu blok güncellenmeli.
+  # TPD (günlük token) panelde yok, o yüzden null.
   gemini:
     probe: local_only
+    model_note: "gemini-3.5-flash"
     limits:
       - window: minute
-        max_requests: null
-        max_tokens: null
+        max_requests: 5
+        max_tokens: 250000
       - window: day
-        max_requests: null
+        max_requests: 20
     # Doğrulandı: "Requests per day (RPD) quotas reset at midnight Pacific time."
+    reset: pacific_midnight
+    reset_verified: true
+
+  # `gemini_lite`: gerçek bir sağlayıcı değil — Gemini'nin ikinci modeli
+  # (flash-lite) için ayrı kota muhasebesi (spec §4.3, `provider` alanı
+  # aslında sağlayıcı+model çiftini temsil ediyor). Aynı GEMINI_API_KEY'i
+  # kullanır (settings.py → PROVIDER_KEY_ALIASES), LiteLLM tarafında ayrı bir
+  # model_name'e gider (`chat-gemini-lite`, bkz. litellm.desktop.yaml).
+  # Faz 4'ün ilk somut kazancı budur (bkz. NEXT_PHASE.md §2,
+  # DECISIONS.md "Gemini'nin iki modeli"): `trivial` görevler günde 500
+  # istek hakkı olan bu modele gider, `flash`'ın günde 20 isteği reasoning
+  # gibi daha kritik görevler için saklanır.
+  gemini_lite:
+    probe: local_only
+    model_note: "gemini-3.5-flash-lite"
+    limits:
+      - window: minute
+        max_requests: 15
+        max_tokens: 250000
+      - window: day
+        max_requests: 500
     reset: pacific_midnight
     reset_verified: true
 

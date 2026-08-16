@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import ClassVar
 
 from platformdirs import user_data_dir
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,10 +23,17 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""
     mistral_api_key: str = ""
 
+    # Faz 4: `gemini_lite` gerçek bir sağlayıcı değil, `gemini`nin ikinci
+    # modeli (flash-lite) için ayrı kota muhasebesi yapabilmek adına router'ın
+    # kullandığı sanal isim (bkz. DECISIONS.md "Gemini'nin iki modeli").
+    # Anahtarı gerçek `gemini` sağlayıcısıyla aynı; burada eşleniyor.
+    PROVIDER_KEY_ALIASES: ClassVar[dict[str, str]] = {"gemini_lite": "gemini"}
+
     def api_key_for(self, provider: str) -> str:
         """Sağlayıcının anahtarı (yoksa boş). Anahtarsız sağlayıcılar için 'local'."""
         if provider in {"ollama", "local"}:
             return "local"
+        provider = self.PROVIDER_KEY_ALIASES.get(provider, provider)
         return str(getattr(self, f"{provider}_api_key", "") or "").strip()
 
     db_path: str = ""

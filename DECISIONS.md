@@ -57,8 +57,8 @@ Ayrıca canlı doğrulanan:
   şemasıyla üçü de doğru `tool_calls` üretti).
 - `/api/quota` üç sağlayıcı için doğru; OpenRouter probe'u
   (`is_free_tier=true` → `funded=false` → günlük tavan 50).
-- Sayaçlar: groq 1/30 dk · 1/1000 gün, openrouter 3/50 gün, gemini limitsiz
-  (`null`) ama tüketim yazılıyor. Reset zamanları doğru.
+- Sayaçlar: groq 1/30 dk · 1/1000 gün, openrouter 3/50 gün, gemini 2/20 gün.
+  Reset zamanları doğru.
 - Elle devre dışı bırakma: OpenRouter kapatılıp sohbet denendiğinde istek hiç
   gönderilmedi, "kullanıcı devre dışı bıraktı" sebebiyle hata döndü.
 
@@ -67,32 +67,38 @@ model adı (`2.0-flash` ve `2.5-flash` ikisi de çağrılamıyor), LiteLLM'in Gr
 rate-limit header'larını geçirmemesi, Groq'un ara sıra `tool_use_failed`
 döndürmesi.
 
-**Gemini kotası hâlâ `null`**: Google ücretsiz katman sayılarını yayınlamıyor,
-kullanıcıya özel. https://aistudio.google.com/rate-limit adresindeki RPM/RPD
-`config/quotas.yaml`'a girilirse Gemini için de "% kaldı" çubuğu çalışır;
-girilmezse tüketim yine sayılır, sadece oran hesaplanamaz (bu bilinçli, spec
-§12 gereği uydurulmadı).
+**Gemini kotası dolduruldu**: kullanıcı AI Studio panelinden okudu, 5 RPM /
+250K TPM / **20 RPD**. `/api/quota` artık Gemini için de oran hesaplıyor
+(doğrulandı: gün penceresi `2/20`, %90). Aşağıda "Gemini limitleri".
 
-**Sıradaki adım: Faz 4 — Router** (spec §5). Yeni bir konuşmada buradan devam
-edilecekse:
+**Faz 4 tamamlandı ve canlı doğrulandı** (2026-08-16). Kapsam:
+`app/router/classifier.py` (kural tabanlı, LLM aşaması yok — gerekçe aşağıda
+"Sınıflandırıcı kural tabanlı, LLM değil"), `config/routing.yaml`'a
+`trivial`/`tool_use`/`reasoning`/`long_context`/`code`/`vision` blokları,
+`loop.py`'nin ilk adımda turun sınıflandırmasını, sonraki adımlarda
+(ara adım/tool sonucu değerlendirme) hep `tool_use`'u kullanması, `gemini_lite`
+sanal sağlayıcısı (flash-lite, ayrı kota muhasebesi — gerekçe aşağıda
+"Gemini'nin iki modeli"). 247 test geçiyor (`uv run pytest`).
 
-1. Önce bu dosyayı ve `README.md`'yi oku, sonra `ORCHESTRATOR_SPEC.md` §5.
-2. Zemin hazır: `routing.yaml`'da şu an sadece `default` zinciri var, ama
-   `selector.choose()` zaten `task_type` parametresi alıyor ve "önce
-   `task_type`, yoksa `default`" diye yazıldı. Faz 4 büyük ölçüde bu YAML'ı
-   `trivial` / `reasoning` / `long_context` / `code` / `vision` blokları ile
-   genişletmek + görev sınıflandırıcıyı yazmak.
-3. **Faz 2-3'te bilinçli olarak yapılmayanlar** (aşağıda gerekçeleriyle var,
-   sonraki fazda "unutulmuş" sanılmasın): çöp kutusu/otomatik yedek, ajanı
-   ayrı sistem kullanıcısı altında çalıştırma, Windows kabuk politikası,
-   LiteLLM'in kendi fallback'i (kasten kapalı).
-4. LiteLLM proxy (port 4000) ve FastAPI (port 8080) arka planda çalışıyor
-   olabilir; `curl localhost:8080/api/config` ile kontrol et. FastAPI
-   `--reload` olmadan çalıştırıldıysa kod değişince yeniden başlatılmalı.
-5. `litellm[proxy]` uyumluluğu için `fastapi==0.136.3` pinli — bu pin'i
-   gereksiz yere kaldırma (aşağıda "fastapi sürüm pini").
-6. Henüz git commit atılmadı (kullanıcı henüz istemedi) — commit/push
-   sadece açıkça istenirse yapılmalı.
+Spec §9 Faz 4 kabul kriteri gerçek sağlayıcılarla, WebSocket istemcisiyle
+(`ws_chat.py`) kurgusuz doğrulandı:
+
+- "merhaba" → `trivial` (%90 güven, "kısa ve fiil içermiyor") → `gemini_lite`
+  seçildi, cevap geldi.
+- 20K karakterden uzun metin → `long_context` (uzunluk kesin sinyal) →
+  `gemini` seçildi (OpenRouter cooldown'daydı, sıradaki denendi — kota/cooldown
+  süzgeci görev tipi seçiminin ALTINDA çalıştığı doğrulandı).
+- Kod/hata ayıklama anahtar kelimeli uzun mesaj → `code` → `openrouter`
+  seçildi.
+- "ULL-Bot klasöründeki dosyaları listele" (kural karar veremedi →
+  `reasoning`e düştü) → adım 1 `reasoning` zincirini kullandı (gemini),
+  adım 2 ve 3 (tool sonucu değerlendirme) `tool_use` zincirine geçti (groq) —
+  aynı turda görev tipinin adım adım değiştiği canlı görüldü.
+
+**Sıradaki adım: Faz 5 — Local model** (spec §5.5/§9). Yeni bir konuşmaya
+başlıyorsan bu dosyayı değil, **[`NEXT_PHASE.md`](./NEXT_PHASE.md)** dosyasını
+oku — orada sistemin anlık durumu, kapsam ve bozulmaması gereken kurallar var.
+Bu dosya "neden böyle yapılmış" arşivi; oradan buraya link veriliyor.
 
 
 Bu dosya, spesifikasyonda belirtilmeyen ama uygulama sırasında verilen kararları
@@ -423,6 +429,84 @@ Ders: model adı uydurmamak yetmiyor (spec §12) — adın hâlâ *yaşadığın
 *bu anahtarla çağrılabildiğini* de kontrol etmek gerekiyor. Groq tarafı aynı
 gün kontrol edildi: `llama-3.3-70b-versatile` production listesinde, üstelik
 kapatılan altı modelin önerilen yerine geçeni.
+
+## Gemini limitleri: günde 20 istek (Faz 3)
+
+Google ücretsiz katman sayılarını yayınlamadığı için `quotas.yaml`'da `null`
+bırakılmıştı. Kullanıcı kendi AI Studio panelinden okudu (2026-08-16) ve
+sayılar girildi. Limitler **model başına**:
+
+| Model | RPM | TPM | RPD |
+|---|---|---|---|
+| `gemini-3.5-flash` (bizim `chat-gemini`) | 5 | 250K | **20** |
+| `gemini-3.7-flash` | 5 | 250K | 20 |
+| `gemini-3.5-flash-lite` | 15 | 250K | **500** |
+
+Günde 20 istek çok dar — `reserve_ratio: 0.1` ile Gemini 18. istekten sonra
+eleniyor. Zincirde üçüncü sırada olduğu için bu şu an sorun değil (son çare),
+ama tek başına iş yapacak bir sağlayıcı değil.
+
+**Flash-lite'a geçmek bilinçli olarak ERTELENDİ.** 500 RPD, 20'nin 25 katı;
+ama kalite daha düşük. Doğru çözüm modeli değiştirmek değil, Faz 4'te ikisini
+birden zincire koymak: `trivial` görevler `flash-lite`'a, `reasoning`
+görevleri `flash`'a. `routing.yaml` zaten görev tipi bloklarını destekliyor,
+sadece yazılmadı. Yani bu, Faz 4'ün ilk somut kazancı.
+
+## Gemini'nin iki modeli: `gemini_lite` sanal sağlayıcısı (Faz 4)
+
+Yukarıdaki ertelemenin uygulanışı. Sorun: kota muhasebesi (`quotas.yaml`,
+`usage_events`, `provider_state`) her şeyi **sağlayıcı adına** göre tutuyor,
+model adına göre değil (spec §4.3 tasarımı böyle — tek sağlayıcı tek model
+varsayımıyla yazıldı). `chat-gemini` (flash, 5 RPM/20 RPD) ve `chat-gemini-lite`
+(flash-lite, 15 RPM/500 RPD) aynı `gemini` etiketi altında sayılsaydı, ikisi
+birbirinin kotasını yerdi ve tek bir limit çifti (hangisi?) uygulanırdı.
+
+**Karar:** `gemini_lite` diye gerçek olmayan, sadece bizim muhasebemizde var
+olan ikinci bir "sağlayıcı" tanımlandı:
+
+- `quotas.yaml` → `providers.gemini_lite` kendi limitleriyle (15 RPM/500 RPD),
+  kendi `provider_state` satırı, kendi cooldown'u.
+- `settings.py` → `PROVIDER_KEY_ALIASES = {"gemini_lite": "gemini"}`:
+  `api_key_for("gemini_lite")` gerçek `GEMINI_API_KEY`'e bakar, ayrı bir
+  `.env` girdisi gerekmez.
+- `litellm.desktop.yaml` → `chat-gemini-lite` model_name'i gerçek LiteLLM
+  yönlendirmesini yapıyor (`gemini/gemini-3.5-flash-lite`); `provider` etiketi
+  zaten sadece bizim kota/loglama katmanımız için var, LiteLLM'e hiç gitmiyor
+  (bkz. `llm.py` docstring: "İstemcinin sağlayıcı hakkında bildiği tek şey...
+  kota sayacına ve 429 işaretine yazmak için gerekiyor").
+
+Bu yüzden selector/quota/tracker kodlarına hiç dokunulmadı — "provider" zaten
+soyut bir etiketti, `gemini_lite` de öyle bir etiket. Model adı canlı denendi
+(2026-08-16, `generateContent` ile HTTP 200) — spec §12 gereği.
+
+## Sınıflandırıcı kural tabanlı, LLM değil (Faz 4)
+
+Spec §5.2 iki aşama tanımlıyor: kural tabanlı ön eleme, sonra kural karar
+veremezse bir modele "bu mesaj ne tipte?" diye tek satırlık bir soru.
+**İkinci aşama bilerek yazılmadı.**
+
+Gerekçe: Faz 5'e kadar local model yok (spec §5.5), yani sınıflandırma
+aşaması da bir API sağlayıcısını çağırmak zorunda kalırdı — her kullanıcı
+isteği iki LLM çağrısına çıkardı (bir sınıflandırma + bir gerçek cevap).
+Gemini'nin günde 20 istek gibi dar bir kotası varken (bkz. yukarısı) bu kabul
+edilemez bir maliyet: sınıflandırma tek başına kotanın yarısını "reasoning"
+cevabına gelmeden tüketebilir. NEXT_PHASE.md §2 bu tuzağı zaten işaretlemişti.
+
+Kural tabanlı sinyaller (uzunluk, anahtar kelime, kısa+fiilsiz mesaj) spec'in
+kendi kabul kriterini ("merhaba" → `trivial`, uzun döküman → `long_context`)
+token harcamadan karşılıyor; kural karar veremediğinde zaten spec'in
+"confidence < 0.5 ise reasoning'e düş" güvenli varsayılanına düşülüyor —
+LLM aşaması olmadan da aynı sonuca varılıyor, sadece daha ucuza.
+
+Bilinen sınır: Türkçe "fiil içeriyor mu" kontrolü (`classifier.py`
+`_has_verb`) tam bir morfoloji analizcisi değil, kelime sonu eki eşleşmesi.
+Kısa ama teknik bir istek ("bu fonksiyonda bug var, düzeltir misin" gibi,
+80 karakter altında ve fiil ekini kaçıran bir çekimle) yanlışlıkla `trivial`e
+düşebilir — canlı testte gözlendi. Kabul edilebilir: en kötü ihtimalle ucuz
+bir modele (flash-lite/groq) gidiyor, cevap kalitesi düşer ama sohbet kesilmez;
+gerçek NLP olmadan bu heuristiğin sıfır yanlış pozitifle çalışması zaten
+beklenmiyordu. Faz 5'te local model gelince ikinci aşama (LLM sınıflandırıcı)
+eklenip bu sınır kapatılabilir.
 
 ## Groq'un `x-ratelimit-*` header'ları proxy'den geçmiyor (Faz 3)
 
