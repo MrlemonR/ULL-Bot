@@ -1,6 +1,6 @@
 """Araçları içe aktarmak kayıt defterini doldurur (`base.register`)."""
 
-from app.agent.tools import files, shell  # noqa: F401
+from app.agent.tools import files, memory, shell  # noqa: F401
 from app.agent.tools.base import (
     Tool,
     ToolContext,

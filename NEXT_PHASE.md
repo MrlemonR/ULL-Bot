@@ -1,62 +1,52 @@
-# Devir notu — Faz 5'e başlarken oku
+# Devir notu — spec'in numaralı fazları bitti, sırada UI var
 
 Bu dosya yeni bir konuşmanın (ve muhtemelen yeni bir modelin) sıfırdan
 başlarken ihtiyacı olan her şeyi tutar. Son güncelleme: **2026-08-16**,
-Faz 4 bittikten hemen sonra.
+Faz 7 (backend kısmı) bittikten hemen sonra.
 
-Okuma sırası:
+**Eğer bu konuşma UI kurmak için başladıysa** (kullanıcı Opus 5 ile ayrı bir
+konuşmada yapacağını söylemişti): bu dosyayı değil, doğrudan
+**[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)**'i oku — WebSocket protokolü ve REST
+uçlarının tam referansı orada. Bu dosya (`NEXT_PHASE.md`) backend'in
+sıradaki adımları için.
 
-1. **Bu dosya** (durum + kurallar + Faz 5 kapsamı)
-2. `ORCHESTRATOR_SPEC.md` §5.5 (local model önerisi) ve §9 (faz tanımları) —
-   projenin asıl şartnamesi, Türkçe
-3. `DECISIONS.md` — "neden böyle yapılmış" arşivi. Baştan sona okumana gerek
-   yok; bir karar tuhaf geldiğinde başlığını orada ara. Faz 4'ten kalanlar:
-   "Gemini'nin iki modeli", "Sınıflandırıcı kural tabanlı, LLM değil".
-4. `README.md` — kurulum, çalıştırma, güvenlik modeli özeti (İngilizce)
+Okuma sırası (backend'e devam edecekse):
+
+1. **Bu dosya** (durum + kurallar + sıradaki iş)
+2. **[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)** — API yüzeyinin tam referansı,
+   backend'e dokunacaksan da faydalı (hangi olay/uç neyi bekliyor).
+3. `DECISIONS.md` — "neden böyle yapılmış" arşivi. Faz 7'den kalanlar:
+   "`remember` aracı: yaz var, ayrı bir recall aracı yok", "Arama: `LIKE`,
+   FTS5 değil", "systemd target'ın `Wants=`'ı gerekiyordu", "`install.sh`
+   hiçbir şeyi enable/start etmiyor".
+4. `README.md` — kurulum, çalıştırma, güvenlik modeli, router, local model,
+   profiller, hafıza/geçmiş/kullanım, deployment.
 
 ---
 
 ## 1. Sistem şu an ne durumda
 
-**Faz 1, 2, 3 ve 4 bitti ve dördü de canlı sistemde doğrulandı.** 247 test
-geçiyor (`uv run pytest`). Henüz **hiç git commit atılmadı** — kullanıcı
-istemedi.
+**Spec'in Faz 1-7'sinin hepsi bitti — UI HARİÇ.** Kullanıcının kararı: UI'ı
+ayrı bir konuşmada, Opus 5 ile yapacak; bu fazda "UI hariç her şeyi yap"
+istendi. 277 test geçiyor (`uv run pytest`). Henüz **hiç git commit
+atılmadı** — kullanıcı istemedi.
 
 | Faz | Ne var |
 |---|---|
 | 1 | LiteLLM proxy (:4000) + FastAPI (:8080) + SQLite + streaming sohbet |
-| 2 | Araçlar (`read_file`, `list_dir`, `search_files`, `run_shell`), güvenlik politikası, sandbox, onay diyalogları, dry-run, audit log |
+| 2 | Araçlar, güvenlik politikası, sandbox, onay diyalogları, dry-run, audit log |
 | 3 | Üç sağlayıcı, kota takibi, 429 → cooldown → sessiz sağlayıcı devri, kota paneli |
-| 4 | Kural tabanlı router: `classifier.py` + `routing.yaml` görev tipi blokları + `gemini_lite` (flash-lite) |
+| 4 | Kural tabanlı router: `classifier.py` + `routing.yaml` görev tipi blokları + `gemini_lite` |
+| 5 | Local model: Ollama (`chat-local`), `ENABLE_LOCAL`, `trivial`/`tool_use` zincirlerinde |
+| 6 | `PROFILE=desktop\|laptop`, `config/litellm.laptop.yaml`, laptop'ta local statik dışlı |
+| 7 | Kalıcı hafıza (`remember`), oturum geçmişi+arama, kullanım grafiği verisi, systemd `--user`, `install.sh` — **UI hariç** |
 
-### Çalışan sağlayıcılar (hepsi ücretsiz, hepsi canlı denendi)
-
-| Sağlayıcı (etiket) | Model | Limit | Kaynak |
-|---|---|---|---|
-| `groq` | `llama-3.3-70b-versatile` | 30 RPM / 12K TPM / 1000 RPD | doküman |
-| `openrouter` | `openai/gpt-oss-20b:free` | 20 RPM / 50 RPD | doküman + canlı probe |
-| `gemini` | `gemini-3.5-flash` | 5 RPM / 250K TPM / **20 RPD** | kullanıcının AI Studio paneli |
-| `gemini_lite` | `gemini-3.5-flash-lite` | 15 RPM / 250K TPM / **500 RPD** | kullanıcının AI Studio paneli |
-
-`gemini_lite` gerçek bir sağlayıcı değil — aynı `GEMINI_API_KEY`'i kullanan,
-sadece kota muhasebesini ayırmak için var olan bir etiket (bkz. `settings.py`
-`PROVIDER_KEY_ALIASES`, DECISIONS.md "Gemini'nin iki modeli").
-
-### Görev tipi → zincir (`config/routing.yaml`, `desktop` profili)
-
-| `task_type` | Zincir |
-|---|---|
-| `trivial` | gemini_lite → groq |
-| `tool_use` | groq → openrouter |
-| `reasoning` | openrouter → gemini |
-| `long_context` | gemini → openrouter |
-| `code` | openrouter → groq |
-| `vision` | gemini (tek aday — bkz. aşağısı) |
-| (eşleşmezse) `default` | groq → openrouter → gemini |
-
-`classifier.py` hiçbir zaman `tool_use` üretmez — bu tip sadece `loop.py`'de
-ajan döngüsünün 2. ve sonraki adımlarında (tool sonucu değerlendirme)
-kullanılır. İlk adım her zaman `classify_cached()`'in sonucunu kullanır.
+`web/index.html` hâlâ Faz 1'den kalma minimal bir sayfa — kullanıcı yeni
+UI'ın "web arayüzü olmadan bir uygulama olarak çalışması" gerektiğini
+söyledi, yani muhtemelen bu tamamen değişecek/yerini başka bir şeye
+bırakacak. Backend tarafı bundan bağımsız, `FAZ7_TESLIM.md`deki protokolle
+konuşulduğu sürece UI'ın tarayıcı mı native bir uygulama mı olduğu
+backend'i ilgilendirmiyor.
 
 ### Servisleri başlatma
 
@@ -66,155 +56,134 @@ uv run litellm --config config/litellm.desktop.yaml --port 4000   # 1. terminal
 uv run uvicorn app.main:app --port 8080                           # 2. terminal
 ```
 
-Ayakta mı: `curl localhost:8080/api/config` ve `curl localhost:4000/health/readiness`.
-`--reload` yok, o yüzden **kod değiştirince uvicorn'u yeniden başlat**.
-Config dosyaları (`quotas.yaml`, `routing.yaml`, `litellm.desktop.yaml`) da
-açılışta okunuyor — onları değiştirdiğinde **her iki servisi de** yeniden
-başlat (litellm config'i litellm'e, routing/quota Python tarafına ait ama
-ikisi de açılışta önbelleğe alınıyor).
+**Ya da Faz 7'den beri systemd `--user` ile:**
 
-Port 8080/4000 "address already in use" derse eski bir süreç hayatta kalmıştır;
-`ss -ltnp | grep -E "4000|8080"` ile PID'i bul ve `kill` at (gerekirse `-9`).
-Bu birkaç kez oldu.
+```bash
+./scripts/install.sh                        # bir kere, .env + birimleri kurar
+systemctl --user enable --now ull-bot.target
+```
 
-Tarayıcı açmadan sohbeti sürmek için (WebSocket istemcisi):
-`/tmp/claude-1000/.../scratchpad/ws_chat.py` — yoksa 20 satırlık bir
-`websockets` istemcisi yazman yeterli, `/ws/chat`'e
-`{"type":"user_message","content":"..."}` gönderiyor. `<<classification>>`
-olayı hangi `task_type`in seçildiğini, `<<model_switch>>` hangi
-sağlayıcının seçildiğini gösteriyor.
+Bu konuşmanın sonunda servisler **systemd üzerinden `active (running)`**
+bırakıldı (`start` edildi, `enable` EDİLMEDİ — yani şu an çalışıyorlar ama
+oturum açılışında otomatik başlamayacaklar; kalıcı otomatik başlatma
+kullanıcının kararı). Durum: `systemctl --user status ull-bot.target`.
+
+Ayakta mı: `curl localhost:8080/api/config`, `curl localhost:4000/health/readiness`,
+`curl localhost:11434/api/tags` (Ollama, ayrı bir sistem servisi, bununla
+ilgisi yok). Kod değiştirince (`--reload` yok): manuel çalıştırıyorsan
+uvicorn'u yeniden başlat; systemd ile çalışıyorsa `systemctl --user restart
+ull-bot-api.service` (litellm config değiştiyse `ull-bot-litellm.service`i
+de). Config dosyaları (`quotas.yaml`, `routing.yaml`, `litellm.*.yaml`)
+açılışta okunuyor.
+
+Tarayıcı açmadan sohbeti sürmek için: `/tmp/claude-1000/.../scratchpad/ws_chat.py`
+(yoksa `FAZ7_TESLIM.md`deki protokolle 20 satırlık bir `websockets`
+istemcisi yaz).
 
 ---
 
-## 2. Faz 5 kapsamı — Local model (spec §5.5)
+## 2. Sıradaki iş — spec'te numaralı bir faz DEĞİL
 
-Amaç: `trivial` (ve mümkünse sınıflandırmanın kendisi) internet olmadan da
-çalışsın; RTX 5060 (8 GB VRAM) üzerinde Ollama ile.
+Spec'in 7 fazı bitti. Kullanıcıyla bu konuşmada geçen, henüz ele alınmamış
+iki gerçek konu:
 
-### Zemin zaten hazır (bunları yeniden yazma)
+### a) UI (kullanıcı bunu ayrı yapacak)
 
-- `routing.yaml`'daki her `task_type` bloğu bir sıralı liste — `local`/`ollama`
-  sağlayıcısını en başa eklemek, `selector.choose()`'a hiç dokunmadan çalışır
-  (spec §5.4 örneği zaten `local`'i ilk sırada gösteriyor).
-- `settings.api_key_for()` `ollama`/`local` için özel durum zaten var:
-  anahtar sorulmadan `"local"` döner (spec: yerel model API anahtarı
-  istemiyor).
-- `quotas.yaml`'da `ollama:` bloğu zaten duruyor (`probe: none, limits: []`)
-  — VRAM sınırı kota sistemi dışında ele alınacak.
+Bkz. `FAZ7_TESLIM.md`. Bu konuşmanın kapsamı değildi, bilerek dışarıda
+bırakıldı.
 
-Yani Faz 5 = **Ollama entegrasyonu** (muhtemelen LiteLLM'in `ollama/` provider
-desteği üzerinden, `litellm.desktop.yaml`'a `chat-local` gibi bir model_name
-eklenerek — spec §1 "orchestrator sağlayıcıdan habersiz" ilkesini bozmadan) +
-**`discover_models.py`** (VRAM'e göre model önerisi) + **`routing.yaml`'a
-local'i `trivial` ve `default` zincirlerinin başına eklemek** + **sınıflandırıcının
-local'e taşınması** (spec §9 Faz 5 madde 2 — şu an `classifier.py` zaten
-LLM'e hiç gitmiyor, bu adımın ne anlama geldiğine dikkatle karar ver, bkz.
-aşağısı).
+### b) Çöp kutusu / `write_file` / `edit_file` / `delete_file`
 
-### Dikkat: "sınıflandırıcı local'e taşınsın" maddesi
-
-Spec §9 Faz 5'in ikinci maddesi bu. Faz 4'te sınıflandırıcı **hiç LLM
-çağırmıyor** (bkz. DECISIONS.md "Sınıflandırıcı kural tabanlı, LLM değil") —
-kural tabanlı yol spec'in kabul kriterini zaten karşılıyor ve token
-harcamıyor. Local model gelince bunu değiştirip değiştirmemek bir tasarım
-kararı: seçenekler (a) kural tabanlı kalsın, sadece kural karar veremediği
-azınlık durumda local'e bir sınıflandırma sorusu eklensin (spec §5.2'nin
-orijinal iki aşamalı tasarımı, artık kota maliyeti yok çünkü local ücretsiz/
-VRAM sınırlı), (b) hiç değişmesin, "local'e taşınsın" maddesi zaten
-gereksizleşmiş sayılsın. Kararı ver, gerekçesiyle DECISIONS.md'ye yaz — spec'i
-"unuttum" diye kör kör uygulama.
-
-### Local model önerisi (spec §5.5, hatırlatma)
-
-8 GB VRAM: sınıflandırıcı/trivial için 3B–4B Q4_K_M, genel iş için 7B–8B
-Q4_K_M. Aynı anda iki model yükleme; `keep_alive` kısa tut. `discover_models.py`
-`nvidia-smi` ile VRAM okuyup öneri versin.
+Kullanıcı bunu **bu faz bittikten sonra** ele almak istediğini söyledi
+(spec'te de zaten hiçbir numaralı faza atanmamıştı — bkz. Faz 6 devir
+notundaki "asıl soru" bölümü, DECISIONS.md). Şu an gerçek yazma/silme
+SADECE onaylanan `run_shell` komutlarıyla oluyor, geri alma yok. Bu
+konuşulmadan "unutulmuş" sanıp otomatik eklenmemeli — kapsamını (hangi
+araçlar, çöp kutusu 30 gün mü tutuyor spec'in dediği gibi, silme onayı nasıl
+görünüyor) kullanıcı belirlemeli.
 
 ---
 
 ## 3. Bozulmaması gereken kurallar
 
-Bunlar spec'ten ve önceki fazların kararlarından geliyor. Faz 5 sırasında
-"temizlik" diye bunları bozma:
-
-1. **Model isimlerini ve kota sayılarını uydurma** (spec §12). Bilmiyorsan
-   config'de `null` bırak. Dahası: bir model adının dokümanda "aktif"
-   görünmesi yetmez, `models.list`'te görünmesi de yetmez — **canlı çağırıp
-   dene**. Faz 3'te iki Gemini modeli, Faz 4'te `gemini-3.5-flash-lite`
-   (`generateContent` ile HTTP 200) tam bu yüzden önce canlı denendi.
-2. **Güvenlik katmanını kısayol geçme.** Bu sistem kullanıcının ana Arch
-   kurulumunda çalışıyor ve shell erişimi var.
+1. **Model isimlerini ve kota sayılarını uydurma** (spec §12). Canlı çağırıp
+   dene.
+2. **Güvenlik katmanını kısayol geçme.** Shell erişimi var.
 3. **Blocked komut listesi kullanıcı/UI tarafından düzenlenemez** (spec §7.3).
-   Kodda yaşar (`app/safety/policy.py`), config'de değil.
-4. **Audit log ajana asla okunabilir/yazılabilir olmamalı.** Data dizini
-   deny listesinde, dosya izni 0600.
-5. **LiteLLM'in kendi fallback'i kapalı kalmalı** (`router_settings.num_retries: 0`).
-   Açılırsa 429 orchestrator'a hiç ulaşmaz, kota takibi kör olur.
-6. **`fastapi==0.136.3` pini** `litellm[proxy]` uyumluluğu için — gereksiz yere
-   kaldırma.
-7. **Commit/push sadece kullanıcı açıkça isterse.** Şu ana kadar hiç commit yok.
-8. **`force_first` fallback'i, kullanıcının elle kapattığı sağlayıcıyı
-   zorlamaz.** Kota tahmini bizim, kapatma kararı kullanıcının.
-9. **Görev tipi seçimi kota/cooldown elemesinin üstüne değil altına eklenir**
-   (spec §9 Faz 4 kabul notu, Faz 5'te de geçerli: local eklenirken de aynı
-   `evaluate()`/`choose()` yolundan geçmeli, ayrı bir kısayol açılmamalı).
-10. **`gemini_lite` gerçek bir sağlayıcı değil, `provider` alanı LiteLLM'e
-    hiç gitmiyor** — bunu "temizlik" diye tek bir `gemini` sağlayıcısına geri
-    birleştirme, kota muhasebesi bu ayrımla çalışıyor (bkz. DECISIONS.md).
+4. **Audit log ajana asla okunabilir/yazılabilir olmamalı.** 0600.
+5. **LiteLLM'in kendi fallback'i kapalı kalmalı** (`num_retries: 0`).
+6. **`fastapi==0.136.3` pini** — kaldırma.
+7. **Commit/push sadece kullanıcı açıkça isterse.**
+8. **`force_first`, kullanıcının elle kapattığı sağlayıcıyı zorlamaz.**
+9. **Görev tipi seçimi kota/cooldown elemesinin üstüne değil altına eklenir.**
+10. **`gemini_lite`/`ollama` gerçek birer sağlayıcı değil.**
+11. **Laptop'ta local dışlaması statik (`routing.yaml`), bir bayrak değil.**
+12. **`litellm.desktop.yaml` ve `litellm.laptop.yaml` aynı modelleri
+    tanımlamalı** (`tests/test_config_files.py` bunu test ediyor).
+13. **`remember`in ayrı bir "recall" aracı yok — notlar sistem promptuna
+    gömülü** (`app/agent/prompts.py` → `_memory_section()`). UI ya da yeni
+    bir araç eklerken bunu iki kere yapma (hem prompt'a göm hem ayrı bir
+    "hafızayı oku" tool'u ekleme — model zaten görüyor).
+14. **`install.sh` servisleri enable/start etmiyor, kasıtlı** (yukarıda
+    "Servisleri başlatma"). UI kurulum akışına bunu otomatikleştiren bir
+    adım eklerken kullanıcıya sor, sessizce yapma.
 
 ## 4. Bilinçli olarak YAPILMAYANLAR
 
-"Unutulmuş" sanıp Faz 5'e sıkıştırma; her birinin `DECISIONS.md`'de gerekçesi
-var ve kendi fazları belli:
-
-- Çöp kutusu / silmeden önce otomatik yedek → yazma araçlarıyla birlikte
-  (`write_file`, `edit_file`, `delete_file`)
-- Ajanı ayrı bir sistem kullanıcısı altında çalıştırma → Faz 7 (systemd)
-- Windows kabuk politikası → `run_shell` Windows'ta bilerek kapalı
-- Profil ayrımı desktop/laptop → Faz 6 (YAML'da yer var, mantık yok)
-- Görsel ek desteği (`vision` task_type'ının ikinci adayı, gerçek `has_image`
-  girişi) → henüz UI/WS protokolünde ek yükleme yok, `classifier.py`
-  `has_image` parametresi hep `False` çağrılıyor. Kendi fazı belli değil,
-  ama Faz 5'in kapsamı değil.
+- **Çöp kutusu / write tool'ları** → yukarıda "sıradaki iş b" — kullanıcı
+  bilerek bu fazdan sonraya bıraktı.
+- **UI** → kullanıcı bilerek bu fazdan çıkardı, Opus 5 ile ayrı yapacak.
+- **Ajanı ayrı bir sistem kullanıcısı altında çalıştırma** → hiçbir fazda
+  yok, systemd `--user` birimi (Faz 7) bunun YERİNE geçmiyor.
+- **Windows kabuk politikası** → `run_shell` Windows'ta bilerek kapalı.
+- **Görsel ek desteği** → `classifier.py`nin `has_image`i hep `False`,
+  WS mesaj şemasında görsel alanı yok.
+- **Sınıflandırıcının LLM'e (local dahil) taşınması** → Faz 5'te bilinçli
+  ertelendi.
+- **LAN üzerinden masaüstü Ollama'sı** → kod hazır, açık değil, test edilmedi.
+- **`/api/quota`nın tüm sağlayıcıları (gemini_lite, ollama dahil) göstermesi**
+  → bilinen boşluk, Faz 4'ten beri var, kimse kapatmadı (aşağısı).
+- **Tam metin arama (FTS5)** → `LIKE` yeterli görüldü (bkz. DECISIONS.md).
 
 ## 5. Bilinen, düzeltilmemiş gerçekler
 
-Bunlar bizim hatamız değil ve sistem doğru davranıyor — Faz 5'te "bug buldum"
-diye peşine düşme:
-
-- **Groq ara sıra `tool_use_failed` döndürüyor** (LiteLLM 500'e çeviriyor).
-  Sistem sağlayıcıyı o tur için eleyip devam ediyor.
-- **LiteLLM, Groq'un `x-ratelimit-*` header'larını istemciye geçirmiyor**
-  (1.97.0'da denendi, `return_response_headers` de işe yaramadı). Groq kotası
-  yerel sayaçtan hesaplanıyor, panelde `tahmini` yazıyor.
-- **OpenRouter'ın ücretsiz modelleri sık 429/502 veriyor.** Zaten Faz 3'ün
-  çözdüğü şey.
-- **Gemini'nin tool-call ID'leri devasa** (`__thought__` + base64 imza).
-  Çalışıyor, sadece log'da çirkin.
-- **`classifier.py`'nin "fiil içeriyor mu" kontrolü tam değil.** Kısa
-  (<80 karakter) ama teknik bir istek, fiil ekini heuristik kaçırırsa
-  yanlışlıkla `trivial`e düşüp ucuz bir modele gidebilir (canlı testte
-  gözlendi). Sohbeti kesmiyor, sadece cevap kalitesini düşürebiliyor —
-  bilinçli bir kabul (bkz. DECISIONS.md "Sınıflandırıcı kural tabanlı, LLM
-  değil").
+- **Groq ara sıra `tool_use_failed` döndürüyor.**
+- **LiteLLM, Groq'un `x-ratelimit-*` header'larını istemciye geçirmiyor.**
+- **OpenRouter'ın ücretsiz modelleri sık 429/502 veriyor.**
+- **Gemini'nin tool-call ID'leri devasa.**
+- **`classifier.py`'nin "fiil içeriyor mu" kontrolü tam değil.**
+- **`chat-local`in ilk isteği yavaş** (~2-5 sn model yükleme).
+- **`GET /api/quota` `gemini_lite`/`ollama`yı hiç göstermiyor** —
+  `describe_chain()` task_type'sız (yani `default`) çağrılıyor.
+- **LAN üzerinden Ollama erişimi test edilmedi.**
+- **Bir sağlayıcı yayına başlayıp (bazı `token` olayları gönderip) sonra
+  aynı adımda başarısız olabiliyor** (canlı gözlendi: groq metne başladı,
+  `tool_use_failed`e benzer bir hatayla düştü, ollama sıfırdan yeni bir
+  cevap üretti). Sunucu tarafında zararsız (yarım içerik hiçbir yere
+  yazılmıyor) ama İSTEMCİ o token'ları zaten almış oluyor —
+  `FAZ7_TESLIM.md` §4 madde 7'de UI için nasıl ele alınacağı yazılı
+  (aynı adımda gelen bir `model_switch`, token arabelleğini sıfırlama
+  sinyali sayılmalı).
 
 ## 6. Son kabul testi nasıl göründü
 
-Faz 4'ün kabul kriteri kurgusuz, WebSocket istemcisiyle doğrulandı:
+Faz 7'nin backend kısmı canlı doğrulandı:
 
 ```
-"merhaba"                              → trivial (%90) → gemini_lite cevapladı
-20K+ karakter metin                    → long_context   → gemini denendi,
-                                                            openrouter cooldown'da
-                                                            (kota/cooldown süzgeci
-                                                             görev tipinin altında
-                                                             çalıştığı doğrulandı)
-uzun kod/hata ayıklama isteği          → code            → openrouter cevapladı
-"ULL-Bot klasöründeki dosyaları        → reasoning (kural karar veremedi)
- listele"                                adım 1: gemini (reasoning zinciri)
-                                          adım 2-3: groq (tool_use zinciri —
-                                          ara adımlarda otomatik geçiş)
+remember aracı: "adımı Limon olarak hatırla" → qwen2.5:3b-instruct (local)
+  remember(key="username", value="Limon") çağırdı → kaydedildi
+  YENİ bir oturumda "adım ne?" → openrouter → "Adın Limon." (hafıza kalıcı)
+
+GET /api/sessions, /api/sessions/{id}/messages, /api/search?q=Limon,
+GET /api/usage/graph, GET /api/memory, DELETE /api/memory/{key}
+  hepsi gerçek veriyle denendi, doğru döndüler
+
+systemd: ./scripts/install.sh çalıştırıldı, birimler ~/.config/systemd/user/e
+  yazıldı, systemd-analyze --user verify hatasız, `start ull-bot.target`
+  ikisini de `active (running)` yaptı, gerçek bir chat isteği cevap verdi
 ```
 
-Faz 5'ten sonra da bu davranış korunmalı: **local eklenince zincirlerin
-başına girer, ama seçim mantığı (kota/cooldown/health) hiç değişmez.**
+Sıradaki adım (UI ya da çöp kutusu, hangisi önce ele alınırsa) hangisi
+olursa olsun bu davranış korunmalı: **backend'in API yüzeyi (`FAZ7_TESLIM.md`)
+UI kurulana kadar sabit kalmalı** — değiştirmek gerekirse önce o dosya
+güncellenmeli, UI onu okuyacak.

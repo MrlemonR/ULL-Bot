@@ -38,6 +38,11 @@ def workspace(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
     monkeypatch.setattr(settings, "groq_api_key", "")
     monkeypatch.setattr(settings, "gemini_api_key", "")
+    # Faz 5: `ollama`'nın "anahtarı" hep var sayılır (api_key_for özel durumu),
+    # o yüzden zincire girip girmemesi tamamen bu bayrağa bağlı. Geliştiricinin
+    # gerçek `.env`'inde `ENABLE_LOCAL` ne olursa olsun testler deterministik
+    # kalsın diye kapalı — açan testler `local_enabled` fixture'ını kullanır.
+    monkeypatch.setattr(settings, "enable_local", False)
 
     sandbox.get_workspace_config(refresh=True)
     init_db()
@@ -53,6 +58,12 @@ def all_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "openrouter_api_key", "test-openrouter-key")
     monkeypatch.setattr(settings, "groq_api_key", "test-groq-key")
     monkeypatch.setattr(settings, "gemini_api_key", "test-gemini-key")
+
+
+@pytest.fixture
+def local_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`ollama`nın router zincirlerine girmesine izin ver (Faz 5 testleri)."""
+    monkeypatch.setattr(settings, "enable_local", True)
 
 
 @pytest.fixture

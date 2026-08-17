@@ -119,6 +119,8 @@ def evaluate(
 ) -> str | None:
     """Aday elenmeliyse sebebini döndür, uygunsa `None`."""
     now = now or utc_now()
+    if candidate.provider in {"ollama", "local"} and not settings.enable_local:
+        return "yerel model devre dışı (ENABLE_LOCAL=false)"
     if not _has_api_key(candidate.provider):
         return "API anahtarı tanımlı değil"
 

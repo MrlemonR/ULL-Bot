@@ -290,11 +290,15 @@ async def test_tool_messages_are_paired_with_their_call(workspace: Path) -> None
 # --- Faz 4: sınıflandırıcının döngüye bağlanması --------------------------
 
 
-async def test_first_step_uses_classified_task_type(workspace: Path, all_providers) -> None:
+async def test_first_step_uses_classified_task_type(
+    workspace: Path, all_providers, local_enabled
+) -> None:
     """"merhaba" trivial'e sınıflanır → trivial zincirinin ilk adayı seçilir
 
     (spec §9 Faz 4 kabul kriteri). `task_type` burada zorlanmıyor — gerçek
-    sınıflandırıcı çalışıyor.
+    sınıflandırıcı çalışıyor. `local_enabled`: Faz 5'ten beri trivial
+    zincirinin ilk adayı `ollama` — bu test spesifik olarak hangi sağlayıcı
+    değil, "ilk adım zincirin BAŞINI kullanıyor mu" diye bakıyor.
     """
     llm = FakeLLM(LLMResponse(content="selam"))
     rec = Recorder()

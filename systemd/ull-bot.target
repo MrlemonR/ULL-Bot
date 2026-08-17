@@ -1,0 +1,15 @@
+[Unit]
+Description=ULL-Bot (LiteLLM proxy + FastAPI orchestrator)
+# Tek komutla ikisini birden başlatmak/durdurmak için:
+#   systemctl --user start ull-bot.target
+#   systemctl --user stop ull-bot.target
+#   systemctl --user status ull-bot.target
+# `Wants=` burada bilerek var — sadece servislerin kendi `[Install]
+# WantedBy=ull-bot.target`ına güvenmek onları ayrıca `enable` etmeyi
+# gerektirirdi (canlı denendi: `enable` edilmeden `start ull-bot.target`
+# hiçbir şeyi başlatmadı). Bu satırla `enable`e gerek kalmadan çalışıyor.
+Wants=ull-bot-litellm.service ull-bot-api.service
+After=network-online.target
+
+[Install]
+WantedBy=default.target

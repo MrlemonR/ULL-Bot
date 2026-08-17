@@ -1,0 +1,68 @@
+model_list:
+  # `desktop` konfigürasyonuyla birebir aynı bulut sağlayıcı listesi — aynı
+  # hesaplar/anahtarlar, cihazdan bağımsız (spec §6 Faz 6, `PROFILE=laptop`
+  # sadece hangi konfigürasyonun okunduğunu değiştiriyor, ayrı hesap açmıyor).
+  # Model adları desktop'takiyle aynı gerekçeyle seçildi — bkz.
+  # `litellm.desktop.yaml` yorumları, tekrar canlı denemeye gerek yok, aynı
+  # sağlayıcı/model/API anahtarı.
+  - model_name: chat-groq
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  - model_name: chat-openrouter
+    litellm_params:
+      model: openrouter/openai/gpt-oss-20b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  - model_name: chat-gemini
+    litellm_params:
+      model: gemini/gemini-3.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: chat-gemini-lite
+    litellm_params:
+      model: gemini/gemini-3.5-flash-lite
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Faz 6: `routing.yaml`'ın `laptop` bloğu bunu HİÇBİR `task_type` zincirine
+  # koymuyor (spec §5.1: "laptop profilinde local tamamen çıkarılır") — yani
+  # bu model_name burada olsa da router hiçbir zaman seçmiyor. Burada duruyor
+  # ki spec §5.1'in opsiyonel "laptop → masaüstü Ollama LAN bağlantısı"
+  # özelliği istenirse tek yapılacak iş `routing.yaml`'ın `laptop.trivial`/
+  # `laptop.tool_use` bloklarına `{provider: ollama, model: chat-local}`
+  # eklemek ve `.env`'de `OLLAMA_HOST`u masaüstünün LAN adresine çevirmek —
+  # bu dosyaya dokunmaya gerek kalmıyor. Varsayılan KAPALI (spec böyle
+  # istiyor); bu iki cihazlı bir kurulum olmadan uçtan uca test edilmedi
+  # (bkz. NEXT_PHASE.md — "gerçek bir laptop olmadan doğrulanamaz").
+  - model_name: chat-local
+    litellm_params:
+      model: ollama_chat/qwen2.5:3b-instruct
+      api_base: os.environ/OLLAMA_HOST
+      keep_alive: "5m"
+      repeat_penalty: 1.15
+      max_tokens: 512
+
+  - model_name: chat-local-big
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b-instruct
+      api_base: os.environ/OLLAMA_HOST
+      keep_alive: "5m"
+      repeat_penalty: 1.15
+      max_tokens: 512
+
+  - model_name: chat-default
+    litellm_params:
+      model: openrouter/openai/gpt-oss-20b:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  drop_params: true
+
+router_settings:
+  # Aynı gerekçe, bkz. `litellm.desktop.yaml` → "DİKKAT" yorumu: orchestrator
+  # kendi sağlayıcı devrini yönetiyor, LiteLLM'in kendi fallback'i karışmasın.
+  num_retries: 0

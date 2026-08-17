@@ -7,6 +7,7 @@ Türkçe yazıyor.
 
 from __future__ import annotations
 
+from app.memory.store import list_notes
 from app.safety.sandbox import describe_workspace
 from app.settings import settings
 
@@ -24,7 +25,7 @@ read them. When you have the answer, stop calling tools and reply.
 Workspace: {workspace}
 Working directory: {cwd}
 {dry_run_note}
-
+{memory_section}
 ## Safety rules — these are not negotiable
 
 1. Some commands require the user's approval; some are refused outright by the
@@ -47,11 +48,28 @@ DRY_RUN_NOTE = (
 LIVE_NOTE = "Dry-run is OFF: approved commands really execute."
 
 
+def _memory_section() -> str:
+    """Kalıcı notları (spec §6.2 `remember`) sistem promptuna göm.
+
+    Ayrı bir "recall" aracı yok (bkz. `tools/memory.py` docstring) — model
+    kaydettiği şeyleri her turda burada, ambient bağlam olarak görüyor.
+    """
+    notes = list_notes()
+    if not notes:
+        return ""
+    lines = "\n".join(f"- {note['key']}: {note['value']}" for note in notes)
+    return (
+        "\n## Remembered notes (from earlier sessions, via the `remember` tool)\n\n"
+        f"{lines}\n"
+    )
+
+
 def system_prompt(cwd: str) -> str:
     return SYSTEM_PROMPT_TEMPLATE.format(
         workspace=describe_workspace(),
         cwd=cwd,
         dry_run_note=DRY_RUN_NOTE if settings.dry_run else LIVE_NOTE,
+        memory_section=_memory_section(),
     )
 
 

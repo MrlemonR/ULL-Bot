@@ -1,0 +1,18 @@
+[Unit]
+Description=ULL-Bot — FastAPI orchestrator
+PartOf=ull-bot.target
+# LiteLLM olmadan da açılabilir (ilk chat isteğinde bağlantı hatası
+# verir, servis çökmez) ama mantıklı sıra önce proxy.
+After=ull-bot-litellm.service
+Wants=ull-bot-litellm.service
+
+[Service]
+Type=simple
+WorkingDirectory=__ULL_BOT_DIR__
+Environment="PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=uv run uvicorn app.main:app --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=ull-bot.target

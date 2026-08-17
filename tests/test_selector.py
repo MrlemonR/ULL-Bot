@@ -128,6 +128,59 @@ def test_all_excluded_raises(workspace: Path, all_providers) -> None:
         choose(exclude={"groq", "openrouter", "gemini"})
 
 
+# --- Faz 5: local model (Ollama) ------------------------------------------
+
+
+def test_local_is_first_choice_for_trivial_when_enabled(
+    workspace: Path, all_providers, local_enabled
+) -> None:
+    """Spec §9 Faz 5 kabul kriteri: local ayaktaysa trivial ona gider."""
+    selection = choose(task_type="trivial")
+    assert selection.provider == "ollama"
+    assert selection.model == "chat-local"
+
+
+def test_local_disabled_by_default_is_skipped(workspace: Path, all_providers) -> None:
+    """`enable_local` fixture'ı yoksa (varsayılan) local aday bile değil."""
+    selection = choose(task_type="trivial")
+    assert selection.provider == "gemini_lite"
+
+
+def test_enable_local_false_is_reported_as_rejection_reason(
+    workspace: Path, all_providers, local_enabled, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "enable_local", False)
+    selection = choose(task_type="trivial")
+    assert selection.provider == "gemini_lite"
+    reasons = {item.provider: item.reason for item in selection.rejected}
+    assert "ENABLE_LOCAL" in reasons["ollama"]
+
+
+def test_local_has_no_quota_ceiling(workspace: Path, all_providers, local_enabled) -> None:
+    """`quotas.yaml`'da `ollama` için limit yok — hiçbir istek sayısı onu elemez."""
+    now = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
+    for index in range(500):
+        record_usage(provider="ollama", model="chat-local", ts=now - timedelta(seconds=index))
+    selection = choose(task_type="trivial", now=now)
+    assert selection.provider == "ollama"
+
+
+def test_local_is_last_resort_for_tool_use(workspace: Path, all_providers, local_enabled) -> None:
+    """spec §5.1 tablosu: tool_use zincirinde local en sonda."""
+    set_cooldown("groq", 120, note="429")
+    set_cooldown("openrouter", 120, note="429")
+    selection = choose(task_type="tool_use")
+    assert selection.provider == "ollama"
+
+
+def test_laptop_profile_never_offers_local(workspace: Path, all_providers, local_enabled) -> None:
+    """spec §5.1: laptop profilinde local tamamen çıkarılır (statik olarak)."""
+    selection = choose(task_type="trivial", profile="laptop")
+    assert selection.provider != "ollama"
+    providers = {c.provider for c in get_routing_config().chain("laptop", "trivial")}
+    assert "ollama" not in providers
+
+
 def test_describe_chain_reports_status(workspace: Path, all_providers) -> None:
     set_cooldown("groq", 60, note="429")
     rows = {row["provider"]: row for row in describe_chain()}

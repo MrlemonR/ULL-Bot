@@ -95,10 +95,71 @@ Spec §9 Faz 4 kabul kriteri gerçek sağlayıcılarla, WebSocket istemcisiyle
   adım 2 ve 3 (tool sonucu değerlendirme) `tool_use` zincirine geçti (groq) —
   aynı turda görev tipinin adım adım değiştiği canlı görüldü.
 
-**Sıradaki adım: Faz 5 — Local model** (spec §5.5/§9). Yeni bir konuşmaya
-başlıyorsan bu dosyayı değil, **[`NEXT_PHASE.md`](./NEXT_PHASE.md)** dosyasını
-oku — orada sistemin anlık durumu, kapsam ve bozulmaması gereken kurallar var.
-Bu dosya "neden böyle yapılmış" arşivi; oradan buraya link veriliyor.
+**Faz 5 tamamlandı ve canlı doğrulandı** (2026-08-16). Kapsam: Ollama kuruldu
+(`ollama-vulkan` GPU backend'i — gerekçe aşağıda "Ollama GPU backend'i"),
+`config/litellm.desktop.yaml`'a `chat-local` (qwen2.5:3b-instruct) ve
+`chat-local-big` (qwen2.5:7b-instruct, henüz bir `task_type`e bağlanmadı),
+`config/routing.yaml`'da `desktop.trivial`de önde ve `desktop.tool_use`de son
+çare, `settings.py`'de `ENABLE_LOCAL`/`OLLAMA_HOST`, `selector.evaluate()`'e
+`ENABLE_LOCAL` kapısı, `scripts/discover_models.py` (VRAM önerisi +
+Faz 1'den beri ertelenen OpenRouter ücretsiz model keşfi). Sınıflandırıcı
+LLM'e taşınmadı — gerekçe aşağıda "Sınıflandırıcı yerelde de LLM olmayacak".
+253 test geçiyor (`uv run pytest`).
+
+Canlı doğrulanan: `ollama_chat/qwen2.5:3b-instruct` ve `ollama_chat/qwen2.5:7b-instruct`
+ikisi de LiteLLM üzerinden tool-calling yapıyor (`list_dir` şemasıyla doğru
+`tool_calls` üretti), `ollama ps` ikisinin de `100% GPU`de çalıştığını
+gösterdi (Vulkan backend kurulduktan sonra — öncesinde `100% CPU`ydu),
+`keep_alive: "5m"` `ollama ps`'in `UNTIL` sütununda doğrulandı.
+
+**Faz 6 tamamlandı ve canlı doğrulandı** (2026-08-16). Kapsam:
+`config/litellm.laptop.yaml` (desktop'un birebir aynı model listesi — aynı
+hesaplar, cihazdan bağımsız), `tests/test_config_files.py` (iki litellm
+config'inin ve `routing.yaml`'ın birbirinden sapmadığını doğrulayan 3 test).
+`routing.yaml`'ın `laptop` blokları zaten Faz 5'ten beri `ollama`sızdı,
+buraya dokunulmadı. 256 test geçiyor (`uv run pytest`).
+
+Spec §9 Faz 6 kabul kriteri ("Laptop'ta `PROFILE=laptop` ile hiçbir hata
+olmadan çalışsın") canlı doğrulandı: ayrı portlarda (`:4001`/`:8081`) ikinci
+bir LiteLLM + FastAPI çifti `PROFILE=laptop` ve `litellm.laptop.yaml` ile
+başlatıldı, "merhaba" gönderildi, hatasız `gemini_lite`ye yönlendi. Sonra
+`ENABLE_LOCAL=true` zorlanarak tekrar denendi — yine `ollama` hiç aday
+olmadı, çünkü dışlama `routing.yaml`'da statik (bkz. aşağıda "Laptop'ta
+local: bayrak değil, statik dışlama"). LAN üzerinden masaüstü Ollama'sına
+bağlanma (spec'in "opsiyonel" dediği kısım) kod olarak hazır ama gerçek
+ikinci bir cihaz olmadan uçtan uca doğrulanamadı — "test edildi" diye
+iddia edilmiyor (spec §12), gerekçesi ve önkoşulu (Ollama şu an sadece
+`127.0.0.1`de dinliyor) README'de ve aşağıda yazılı.
+
+**Faz 7 tamamlandı — UI HARİÇ** (2026-08-16). Kullanıcının kararı: UI'ı ayrı
+bir konuşmada Opus 5 ile yapacak, bu fazda backend'in tamamı istendi. Kapsam:
+kalıcı hafıza (`memory_notes` + `remember` aracı + sistem promptuna gömme),
+oturum geçmişi + arama (`GET /api/sessions`, `GET /api/sessions/{id}/messages`,
+`GET /api/search`), kullanım grafiği verisi (`GET /api/usage/graph`,
+`quota/tracker.py` → `usage_by_day`), systemd `--user` birimleri
+(`systemd/*.service` + `ull-bot.target`), kurulum scripti
+(`scripts/install.sh`). Çöp kutusu/`write_file`/`edit_file`/`delete_file`
+bilinçli olarak DIŞARIDA bırakıldı — kullanıcı bunu bu faz bittikten sonra
+ayrıca ele almak istedi (spec'te zaten hiçbir faza atanmamıştı, bkz. Faz 6
+notları). 277 test geçiyor (`uv run pytest`).
+
+Gerekçe detayları aşağıda ayrı başlıklarda: "`remember` aracı: yaz var, ayrı
+bir recall aracı yok", "Arama: `LIKE`, FTS5 değil", "systemd target'ın
+`Wants=`'ı gerekiyordu — `enable` etmeden çalışmadı", "`install.sh` hiçbir
+şeyi enable/start etmiyor".
+
+Ayrıca **[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)** yazıldı — bu, UI'ı
+kuracak konuşma (Opus 5) için hazırlanmış, backend'in tüm API yüzeyini
+(WebSocket protokolü + REST uçları) tek dosyada özetleyen bir teslim
+belgesi. `NEXT_PHASE.md`den farkı: `NEXT_PHASE.md` "bir sonraki faza nasıl
+devam edilir" diye devir notu, `FAZ7_TESLIM.md` ise "UI'ı kuracak birinin
+backend'i baştan okumadan bilmesi gereken her şey" diye bir referans.
+
+**Sıradaki adım: UI** (kullanıcı bunu ayrı yapacak, spec'te numaralı bir faz
+değil — Faz 7'nin "cila" listesindeki maddeler zaten burada bitti). Yeni bir
+konuşmaya başlıyorsan bu dosyayı değil, **[`NEXT_PHASE.md`](./NEXT_PHASE.md)**
+ve **[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)** dosyalarını oku. Bu dosya "neden
+böyle yapılmış" arşivi; oradan buraya link veriliyor.
 
 
 Bu dosya, spesifikasyonda belirtilmeyen ama uygulama sırasında verilen kararları
@@ -507,6 +568,264 @@ bir modele (flash-lite/groq) gidiyor, cevap kalitesi düşer ama sohbet kesilmez
 gerçek NLP olmadan bu heuristiğin sıfır yanlış pozitifle çalışması zaten
 beklenmiyordu. Faz 5'te local model gelince ikinci aşama (LLM sınıflandırıcı)
 eklenip bu sınır kapatılabilir.
+
+## Sınıflandırıcı yerelde de LLM olmayacak (Faz 5)
+
+Yukarıdaki kararın açık bıraktığı soruyu kapatıyor. NEXT_PHASE.md Faz 5'e
+girerken bunu bilerek soru olarak bıraktı: local model artık var, spec §5.2'nin
+orijinal iki aşamalı tasarımını (kural → karar veremezse local'e sor) şimdi
+kurmalı mıyız?
+
+**Karar: hayır, kural tabanlı kalıyor.** Gerekçe:
+
+- Faz 4'ün kural tabanlı yaklaşımı zaten spec'in kabul kriterini karşılıyor
+  ("merhaba" → trivial, uzun döküman → long_context) — local'in çözdüğü tek
+  şey artık "LLM çağırmak kota harcıyor" sorunuydu, ama bu sorunu ortadan
+  kaldırmak yeni bir sorun açmadan olmuyor: her mesaja bir sınıflandırma
+  çağrısı eklemek gecikme ekler (local modelin cevap süresi + varsa model
+  yükleme gecikmesi), üstelik tam da `trivial` mesajların hız kazanması
+  gereken yerde.
+- Kural tabanlı sınıflandırmanın bilinen sınırı (kısa+teknik istek → yanlışlıkla
+  `trivial`) zaten "sohbeti kesmiyor, sadece kaliteyi düşürüyor" diye kabul
+  edilmişti (yukarısı). Bunu düzeltmek için 3B'lik bir modele güvenmek
+  belirsiz bir kazanç için kesin bir maliyet (gecikme + karmaşıklık) demek.
+- İki aşamalı tasarım asıl `local`ın *kendisi de bir "sağlayıcı"* olduğu bir
+  dünya için mantıklıydı (spec §5.1 tablosu: `classification: local (her
+  zaman)`) — ama bizim mimarimizde sınıflandırma `choose()`'dan ÖNCE,
+  hangi zincirin kullanılacağını belirlemek için çalışıyor; sınıflandırmanın
+  kendisi bir `task_type` zincirinden geçmiyor. Local'i sınıflandırma için
+  kullanmak, `classifier.py`'ye ayrı bir LiteLLM çağrısı gömmek demek —
+  `selector`/`routing.yaml` altyapısının hiç dokunmadığı yeni bir yol.
+
+Faz 5'in gerçek katkısı sınıflandırmaya değil, sınıflandırmanın SONUCUNA:
+`trivial` (ve `tool_use`'un son çaresi) artık gerçekten internetsiz
+çalışabiliyor. Bu, spec'in Faz 5 kabul kriterini ("internet kapalıyken bile
+trivial işler çalışsın") tam karşılıyor. Karar geri alınabilir — local model
+yeterince hızlı/güvenilir hâle gelirse ve gerçek bir ölçümle gecikme
+maliyetinin kabul edilebilir olduğu gösterilirse iki aşamalı tasarıma
+dönülebilir; şu an için varsayımsal bir kazanç için mimari eklemiyoruz.
+
+## Ollama GPU backend'i (Faz 5)
+
+Arch'ın `ollama` paketi CPU-only — GPU desteği ayrı paketlerde
+(`ollama-cuda`, `ollama-rocm`, `ollama-vulkan`). İlk kurulumda `qwen2.5:3b-instruct`
+canlı denendiğinde `ollama ps` `100% CPU` gösterdi; `journalctl -u ollama`
+sadece `id=cpu library=cpu` keşfetmiş, RTX 5060 hiç görünmüyordu.
+
+**Karar: `ollama-vulkan`, `ollama-cuda` değil.**
+
+- `ollama-cuda` tam CUDA toolkit'ini de çekiyor (`Depends On: ... cuda`,
+  indirme 2.2 GiB + kurulum 4.7 GiB = paketin kendisiyle toplam ~3 GiB indirme
+  / ~5.7 GiB disk).
+  `ollama-vulkan` 7 MiB indirme, zaten kurulu `vulkan-icd-loader`'ı kullanıyor
+  (`nvidia_icd.json` NVIDIA sürücüsüyle zaten geliyordu).
+- llama.cpp'nin Vulkan backend'i CUDA'ya yakın performans veriyor (genel
+  bilgi, bu makinede karşılaştırmalı benchmark koşulmadı) — RTX 5060 gibi
+  yeni bir kart için CUDA'nın "daha olgun" avantajı da mimarinin (Blackwell)
+  ne kadar yeni olduğu düşünülürse garanti değil.
+- Kurulumdan sonra `journalctl -u ollama` `id=0 library=Vulkan name=Vulkan0
+  description="NVIDIA GeForce RTX 5060" total="8.0 GiB" available="5.9 GiB"`
+  gösterdi; `ollama ps` `100% GPU`ya döndü. Hem 3B hem 7B model canlı test
+  edildi, ikisi de GPU'da, tool-calling dahil çalıştı.
+
+Not: entegre GPU (Ryzen 5 7600'ün dahili grafik birimi) Ollama tarafından
+otomatik elendi (`dropping integrated GPU; to enable, set
+OLLAMA_IGPU_ENABLE=1`) — doğru davranış, RTX 5060 zaten tercih edilen kart.
+
+## Ollama entegrasyonu: `chat-local` / `chat-local-big` (Faz 5)
+
+Model seçimi spec §5.5'in "3B-4B sınıflandırıcı/trivial, 7B-8B genel iş"
+tavsiyesini birebir izliyor: `qwen2.5:3b-instruct` (Q4_K_M, ~2.2 GiB) ve
+`qwen2.5:7b-instruct` (Q4_K_M, ~4.7 GiB) — ikisi de `ollama show` ile
+`tools` yeteneğini (function calling) doğruladı, ikisi de canlı test edildi
+(`generateContent` değil ama eşdeğeri: `litellm.completion(model="ollama_chat/...",
+tools=[...])` gerçek bir `list_dir`/`get_weather` tool_call'u üretti).
+
+`model:` alanı `ollama/qwen2.5:3b-instruct` DEĞİL, `ollama_chat/qwen2.5:3b-instruct`
+— LiteLLM'in iki Ollama provider'ı var, `ollama/` ham completion uç noktasına
+gidiyor (tool-calling'i düzgün desteklemiyor), `ollama_chat/` chat-completion
+uç noktasına gidiyor. Bu ayrım canlı denenerek doğrulandı, dokümandan değil.
+
+**`repeat_penalty: 1.15` + `max_tokens: 512` sonradan eklendi.** Kullanıcı
+canlı kullanırken `chat-local` bir mesaja "HAHAHA..." diye 438 token boyunca
+aynı tokenı tekrarlayan bozuk bir cevap üretti. Kök sebep: Ollama'nın bu
+modeldeki varsayılan `repeat_penalty`si 1.0 (sunucu loglarında doğrulandı,
+`llama-server` slot ayarları) — yani tekrar cezası hiç uygulanmıyor, küçük/
+quantize modellerde bilinen bir dejenerasyon modu. `repeat_penalty=1.15` ile
+birkaç canlı denemede (aynı, önceden bozulan istek dahil) tutarlı, makul
+cevaplar geldi. `max_tokens: 512` ayrı bir güvenlik ağı: ceza yine de işe
+yaramazsa döngü bağlamı doldurana kadar sürmesin. Stokastik bir örnekleme
+sorunu olduğu için %100 önlendiği iddia edilmiyor — sadece olasılığı ve en
+kötü durumdaki maliyeti (token/gecikme) düşürüyor.
+
+`keep_alive: "5m"` litellm_params'a doğrudan eklendi (spec §11: "16 GB RAM +
+oyun/Blender ile VRAM çakışması" → kısa keep_alive). Ollama'nın kendi
+`OLLAMA_KEEP_ALIVE` ortam değişkenini (systemd servisi için, sudo gerektirir)
+değiştirmek yerine bu tercih edildi çünkü (a) per-model ayar imkânı veriyor —
+ileride farklı modeller farklı keep_alive isteyebilir, (b) sistem servisine
+dokunmadan, sadece bizim config dosyamızdan yönetilebiliyor.
+
+**"VRAM baskısında otomatik API'ye düşme" (spec §9 Faz 5) için ayrı kod
+YAZILMADI** — mevcut mekanizma zaten bunu karşılıyor: Ollama VRAM'e sığmayan
+bir isteği reddederse, LiteLLM proxy bunu bir HTTP hata koduna çevirir,
+`llm.py` bunu `LLMError` olarak fırlatır, `loop.py`'nin `_call_model`'ı bunu
+zaten her sağlayıcı hatası gibi yakalayıp sıradaki adaya geçiyor (Faz 3'ten
+beri var olan genel mekanizma). Local'e özel bir "VRAM kontrolü" eklemek,
+zaten var olan sağlayıcı-hata-elemesini tekrar etmek olurdu.
+
+**`chat-local-big` (7B model) hiçbir `task_type` zincirine bağlanmadı.**
+NEXT_PHASE.md'nin Faz 5 kapsamı açıkça `trivial` ve `default`i işaret etmişti
+(ikincisinden sonra vazgeçildi, aşağıya bak); mevcut altı görev tipinden
+hiçbiri "yerel ama büyük" bir katmana ihtiyaç duymuyor — `reasoning`/`code`
+zaten bulut modellerine (openrouter/gemini) gidiyor ve onlar 7B'den daha
+yetenekli, `trivial` zaten küçük modelle yetiyor. 7B modeli config'e koymanın
+tek amacı: spec'in önerisini canlı doğrulamak (yukarıdaki test) ve ileride
+(örn. internet tamamen yokken `reasoning` için bir "yerel de olsa en iyisi"
+seçeneği gerekirse) hazır olması. Zorla bir yere bağlamak yapay bir kazanç
+olurdu.
+
+**`default` zincirine local EKLENMEDİ** — NEXT_PHASE.md ilk yazıldığında bunu
+planlamıştı ama Faz 4 bittiğinde `default` artık ulaşılamaz bir yol: altı
+`task_type` de (`trivial`/`tool_use`/`reasoning`/`long_context`/`code`/`vision`)
+`routing.yaml`'da tanımlı olduğu için `classify()` hiçbir zaman `default`'a
+düşmüyor (`RoutingConfig.chain` sadece blok YOKSA `default`'a düşüyor).
+`default` sadece testlerdeki `task_type="default"` zorlaması ve gelecekte
+tanımsız bir görev tipi gelirse diye duruyor. Onu değiştirmek gerçek trafiği
+etkilemezdi, sadece test/geriye-dönük-uyumluluk yolunu bulandırırdı.
+
+## Laptop'ta local: bayrak değil, statik dışlama (Faz 6)
+
+`ENABLE_LOCAL=false` (Faz 5) ve "laptop profilinde local yok" (spec §5.1) iki
+ayrı sorunu çözüyor, kasıtlı olarak birleştirilmedi. `ENABLE_LOCAL` kullanıcının
+elle kapattığı bir anahtar (VRAM'i oyuna bırakmak gibi, geçici); laptop'ta
+local'in yokluğu ise **donanımsal bir gerçek** — laptopta muhtemelen ayrık GPU
+yok ya da 8 GB VRAM yok, `ENABLE_LOCAL=true` yapılsa bile Ollama'nın çalışacak
+bir şeyi olmayabilir. Bu yüzden dışlama `routing.yaml`'ın `laptop` bloklarında
+statik: `ollama` o zincirlerde hiç YOK, bir bayrağa bakılmıyor.
+
+Canlı doğrulandı: `PROFILE=laptop ENABLE_LOCAL=true` ile başlatılan bir
+instance'a "merhaba" gönderildiğinde `gemini_lite` seçildi, `ollama` hiç aday
+bile olmadı (bkz. yukarıdaki "Faz 6 tamamlandı" notu). Eğer bu iki mekanizma
+birleştirilseydi (`laptop` profilinde `enable_local`ı kod içinde `False`'a
+zorlamak gibi), kullanıcı gelecekte "laptopumda da aslında güçlü bir GPU var,
+local'i açmak istiyorum" dediğinde `ENABLE_LOCAL=true` yetmez, kod
+değiştirmesi gerekirdi — statik `routing.yaml` yaklaşımı bunu bir config
+değişikliğine indiriyor (`laptop.trivial`/`laptop.tool_use`ye `{provider:
+ollama, model: chat-local}` eklemek yeterli).
+
+## `config/litellm.laptop.yaml`: desktop'un kopyası, ayrı doğrulama yok (Faz 6)
+
+Groq/OpenRouter/Gemini için laptop'ta ayrı hesap ya da ayrı model seçimi yok
+— aynı `.env`deki aynı API anahtarları, aynı model adları. Bu yüzden
+`litellm.desktop.yaml`'da tek tek canlı denenen model adları (spec §12)
+laptop dosyasında TEKRAR denenmedi — aynı sağlayıcı/model/anahtar üçlüsü,
+sonuç değişmez. `chat-local`/`chat-local-big` girdileri de kopyalandı (aynı
+`repeat_penalty`/`max_tokens` dahil) ama `routing.yaml`'ın `laptop` blokları
+onlara hiç referans vermiyor — bkz. yukarısı. Amaç: LAN özelliği açılırsa
+(aşağısı) litellm config'ine dokunmaya gerek kalmasın, sadece `routing.yaml`
+ve `.env` değişsin.
+
+**İki dosyanın birbirinden sapmaması `tests/test_config_files.py` ile
+zorlanıyor** (`model_name` kümeleri eşit olmalı) — elle bakılan iki kopya
+dosya, biri güncellenip diğeri unutulursa sessizce bozulur; bu spec §12'nin
+"config'lerde tutarsızlık da bir tür uydurma kadar tehlikeli" ilkesinin bir
+uzantısı olarak test'e bağlandı.
+
+## LAN üzerinden masaüstü Ollama'sı: kod hazır, doğrulanmadı (Faz 6)
+
+Spec §5.1 bunu "opsiyonel, varsayılan kapalı" diye tanımlıyor. Kod tarafı
+zaten hazırdı (Faz 5'te `settings.ollama_host` bir env var, herhangi bir
+adrese çevrilebilir) — Faz 6'nın yapması gereken tek şey `routing.yaml`'ın
+`laptop` bloklarına `ollama`yı eklemek ve dokümante etmekti, kod değişikliği
+gerekmiyor.
+
+**Neden hâlâ kapalı ve neden uçtan uca test edilmedi:** `ss -ltnp` bu
+makinenin Ollama'sının `127.0.0.1:11434`de dinlediğini gösterdi — yani LAN'dan
+şu an erişilemez. Açmak için `systemctl edit ollama` ile `OLLAMA_HOST=0.0.0.0:11434`
+gibi bir override gerekir; bu, masaüstünün yerel ağdaki her cihaza (misafir
+Wi-Fi dahil, ağ segmentasyonu yoksa) bir LLM endpoint'i açması demek —
+kullanıcının bilerek onaylaması gereken bir karar, otomatik yapılmadı. Ayrıca
+bu makinede test edecek ikinci bir cihaz (gerçek laptop) yok; `PROFILE=laptop`
+testi bu yüzden aynı makinede ayrı portlarla simüle edildi (yukarıdaki "Faz 6
+tamamlandı" notu), LAN kısmı simüle edilemedi. "Test edildi" denmiyor —
+spec §12 bunu yasaklıyor. Adımlar README'ye ve NEXT_PHASE.md'ye yazıldı.
+
+## `remember` aracı: yaz var, ayrı bir recall aracı yok (Faz 7)
+
+Spec §6.2 tablosu tek bir hafıza aracı listiyor: `remember` — "kalıcı nota
+yaz", risk `safe`. Okuma tarafı için ayrı bir araç (`recall`, `list_notes`
+gibi) tanımlamıyor. Bunu boşluk sanıp kendiliğinden eklemedik: bunun yerine
+`list_notes()` her `system_prompt()` çağrısında (yani her turun başında)
+notları promptuna gömüyor — model "hatırladıklarını" bir araç çağırmadan,
+tıpkı `workspace`/`cwd` gibi ambient bir bağlam olarak görüyor. Bu hem
+spec'e sadık kalıyor (sadece `remember` var) hem de daha az tool-call
+turu demek (model her seferinde "ne hatırlıyordum?" diye sormak zorunda
+değil).
+
+`remember`in riski `safe` (spec'in kendi tablosu böyle diyor) ve `dry_run`a
+bakmıyor — `writes: bool` ClassVar'ı (spec §6.1 "yazma yapabilir mi" alanı)
+`Remember`de `False` bırakıldı, çünkü `dry_run`ın koruduğu şey kullanıcının
+GERÇEK sistemi (dosyalar, kabuk); `memory_notes` bizim kendi SQLite'ımız,
+oraya yazmak kullanıcının makinesinde hiçbir şeyi değiştirmiyor. Canlı
+denendi: `qwen2.5:3b-instruct` (local model) bile "adımı Limon olarak
+hatırla" isteğine `remember(key="username", value="Limon")` çağırdı, bir
+SONRAKİ oturumda "adım ne?" sorusuna doğru cevap verdi — hafızanın turlar
+VE oturumlar arası kalıcılığı böyle doğrulandı.
+
+Silme (`DELETE /api/memory/{key}`) bir API uç noktası, araç değil — spec bir
+"forget" aracı tanımlamıyor ve modelin kendi kendine "bu notu unutayım" diye
+karar vermesi istenen bir davranış değil; yanlış/eskimiş bir notu silmek
+kullanıcının (ya da ileride UI'ın) yönetim işlemi.
+
+## Arama: `LIKE`, FTS5 değil (Faz 7)
+
+`GET /api/search` düz bir `content LIKE '%...%'` sorgusu. SQLite'ın FTS5 tam
+metin arama motoru daha iyi sıralama/skor verirdi ama bakım maliyeti var:
+ayrı bir virtual table, `messages` tablosuyla senkron tutmak için trigger'lar
+(`INSERT`/`UPDATE`/`DELETE` üçü de), migration karmaşıklığı. Karşılığında
+kazanılan şey — tek kullanıcının kişisel sohbet geçmişinde (muhtemelen
+binlerce, on binlerce mesaj, milyonlarca değil) "daha hızlı/daha alakalı
+arama" — bu ölçekte gerçek bir sorun değil. `LIKE` bir tam tablo taraması
+ama SQLite'ta bu boyutta veri için gözle görülür bir gecikme yaratmıyor.
+Veri hacmi gerçekten büyürse (örn. Faz 7 sonrası aylarca kullanım) FTS5'e
+geçmek küçük bir migration — şimdiden karmaşıklık eklemenin gerekçesi yok.
+
+Kullanıcının sorgusundaki `%`/`_` LIKE joker karakterleri kaçırılıyor
+(`search_messages` içinde) — yoksa "%" arayan biri her satırla eşleşirdi,
+şaşırtıcı bir davranış olurdu.
+
+## systemd target'ın `Wants=`'ı gerekiyordu (Faz 7)
+
+İlk yazımda `ull-bot.target` sadece `[Install] WantedBy=` ile servislere
+bağlıydı (spec'in "systemd user service" maddesi başka detay vermiyor,
+standart bir target/service ayrımı denendi). Canlı test edildi: `systemctl
+--user start ull-bot.target` her iki servisi de `inactive (dead)` bıraktı —
+çünkü `[Install] WantedBy=`, birim `enable` EDİLMEDEN hiçbir şey yapmıyor
+(sadece `enable` sırasında bir symlink oluşturmak için var, `start`ın
+kendisiyle ilgisi yok). `ull-bot-litellm.service`/`ull-bot-api.service`i
+ayrıca `enable` etmek gerekirdi.
+
+**Düzeltme:** `ull-bot.target`a `Wants=ull-bot-litellm.service
+ull-bot-api.service` eklendi (`[Unit]` bölümünde). Bununla `enable`e hiç
+gerek kalmadan `start ull-bot.target` ikisini de başlatıyor — canlı
+doğrulandı (`systemctl --user status` ikisini de `active (running)` gösterdi,
+gerçek bir chat isteği cevap verdi). `enable` hâlâ mümkün (kalıcı otomatik
+başlatma için, `[Install] WantedBy=default.target` duruyor) ama artık
+zorunlu değil.
+
+## `install.sh` hiçbir şeyi enable/start etmiyor (Faz 7)
+
+Script `uv sync` yapıyor, `.env` yoksa oluşturuyor, systemd birimlerini
+`~/.config/systemd/user/`e kopyalayıp `daemon-reload` çalıştırıyor —
+`systemctl --user enable`/`start` ETMİYOR, sadece ekranda komutu yazdırıyor.
+Bilinçli: bu iki komut kalıcı arka plan servisleri başlatmak/oturum açılışına
+bağlamak demek, kullanıcının fiilen "şimdi çalışsın" demesi gereken bir an —
+kurulum scriptinin kendiliğinden yapacağı bir şey değil (spec §12'nin
+"arkasında ne olduğunu bilmeden bir şey açma" ruhu, sudo/pacman kararlarında
+zaten aynı ilkeyle hareket edildi, bkz. Faz 5 "Ollama GPU backend'i").
+Script'in kendisi test edildi (bu makinede fiilen çalıştırıldı, birimler
+`~/.config/systemd/user/`e yazıldı, `systemd-analyze --user verify` hatasız
+döndü) — ama `enable --now`ı kullanıcı ayrıca çalıştırdı/çalıştıracak.
 
 ## Groq'un `x-ratelimit-*` header'ları proxy'den geçmiyor (Faz 3)
 

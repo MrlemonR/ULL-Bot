@@ -14,8 +14,13 @@
 # `model` alanları LiteLLM'deki `model_name`'ler (config/litellm.*.yaml).
 # Orchestrator sağlayıcı SDK'sı bilmez, sadece bu soyut adları kullanır.
 #
-# `local`/`ollama` adayları henüz yok (Faz 5) — spec'in "local → groq" gibi
-# zincirlerinde local basamağı bilerek atlandı; Faz 5'te bu dosyaya eklenecek.
+# Faz 5: `ollama` (chat-local, qwen2.5:3b-instruct — bkz. DECISIONS.md
+# "Ollama entegrasyonu") `desktop.trivial`de önde, `desktop.tool_use`de son
+# çare (spec §5.1 tablosu). `ENABLE_LOCAL=false` ya da Ollama kapalıysa
+# `selector.evaluate()` onu otomatik eler (bkz. app/router/selector.py),
+# zincirdeki sıradaki aday devreye girer — buraya ayrı bir kısayol
+# eklenmedi. `laptop` profilinde local YOK (spec §5.1: "laptop profilinde
+# local tamamen çıkarılır") — Faz 6'ya kadar bu profil ayrımı statik.
 
 profiles:
   desktop:
@@ -29,19 +34,25 @@ profiles:
       - {provider: gemini, model: chat-gemini}
 
     # "Saat kaç", "merhaba" gibi kısa/fiilsiz istekler — spec §9 Faz 4 kabul
-    # kriteri tam bu. `gemini_lite` (flash-lite, günde 500 istek) önde:
-    # Faz 3'ün ilk somut kazancı (bkz. DECISIONS.md "Gemini'nin iki modeli").
-    # Groq yedek — flash-lite kotası da (nadiren) tükenirse.
+    # kriteri tam bu. Faz 5'in kabul kriteri ("internet kapalıyken bile
+    # trivial işler çalışsın") `ollama` önde olduğu için sağlanıyor — kota
+    # yok, API anahtarı istemiyor, tek koşul Ollama'nın ayakta olması.
+    # `gemini_lite` (flash-lite, günde 500 istek) ikinci sırada (Faz 3'ün
+    # ilk somut kazancı, DECISIONS.md "Gemini'nin iki modeli"), Groq son çare.
     trivial:
+      - {provider: ollama, model: chat-local}
       - {provider: gemini_lite, model: chat-gemini-lite}
       - {provider: groq, model: chat-groq}
 
     # Ajan döngüsünün ara adımları (tool sonucu değerlendirme). Groq hızlı
     # ve zaten tool-calling'de sorunsuz çalışıyor (bkz. bilinen tool_use_failed
     # notu, NEXT_PHASE.md §5) — ara adımlar için en ucuz/hızlı seçenek.
+    # `ollama` en sonda: spec §5.1 tablosunun son basamağı, gerçek internet
+    # kesintisinde bile ajan döngüsü tamamen durmasın diye.
     tool_use:
       - {provider: groq, model: chat-groq}
       - {provider: openrouter, model: chat-openrouter}
+      - {provider: ollama, model: chat-local}
 
     # Planlama, çok adımlı düşünme, analiz. OpenRouter'ın büyük ücretsiz
     # modeli önde (spec tablosu), Gemini yedek.
@@ -74,7 +85,10 @@ profiles:
       - {provider: openrouter, model: chat-openrouter}
       - {provider: gemini, model: chat-gemini}
 
-    # Laptop'ta da local yok (Faz 5/6 bekliyor) — desktop'la aynı zincir.
+    # Laptop'ta `ollama` bilinçli olarak YOK (spec §5.1) — aksi hâlde
+    # laptop'ta hiç Ollama kurulu olmasa bile zincir onu aday sanıp
+    # deneyecekti (`api_key_for` yerel için hep "var" döner). Faz 6'da LAN
+    # üzerinden masaüstüne bağlanma opsiyonu eklenirse bu değişir.
     trivial:
       - {provider: gemini_lite, model: chat-gemini-lite}
       - {provider: groq, model: chat-groq}

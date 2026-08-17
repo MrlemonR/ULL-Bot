@@ -7,7 +7,7 @@ sayımı düzeltir — drift olur, olacak (spec §4.2).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db.connection import get_connection
@@ -195,5 +195,32 @@ def recent_events(limit: int = 100) -> list[dict[str, Any]]:
             "SELECT ts, provider, model, prompt_tokens, completion_tokens, "
             "       latency_ms, status FROM usage_events ORDER BY id DESC LIMIT ?",
             (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def usage_by_day(days: int = 14, *, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Faz 7 "kullanım grafiği": gün × sağlayıcı kırılımında istek/token.
+
+    UTC güne göre gruplanıyor — kota pencereleri gibi farklı sağlayıcılara
+    göre farklı gece yarısı kullanmak (spec §4.2) burada anlamsız, bu sadece
+    bir görselleştirme, kota hesaplaması değil. UI hiç yazılmadı (bkz.
+    NEXT_PHASE.md) — bu sadece veriyi üretiyor, `GET /api/usage/graph` bunu
+    JSON olarak veriyor.
+    """
+    now = now or utc_now()
+    start = (now - timedelta(days=days - 1)).date().isoformat()
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT substr(ts, 1, 10) AS day, provider, "
+            "       COUNT(*) AS requests, "
+            "       COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tokens, "
+            "       SUM(CASE WHEN status = 'rate_limited' THEN 1 ELSE 0 END) AS rate_limited, "
+            "       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors "
+            "FROM usage_events "
+            "WHERE substr(ts, 1, 10) >= ? "
+            "GROUP BY day, provider "
+            "ORDER BY day ASC, provider ASC",
+            (start,),
         ).fetchall()
     return [dict(row) for row in rows]

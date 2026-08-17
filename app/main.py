@@ -9,10 +9,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.agent.loop import AgentLoop
 from app.db.connection import init_db
+from app.memory.store import (
+    delete_note,
+    get_session_messages,
+    list_notes,
+    list_sessions,
+    search_messages,
+)
 from app.quota.models import get_quota_config
 from app.quota.probes import probe_all
 from app.quota.state import disable, enable, get_state
-from app.quota.tracker import snapshot
+from app.quota.tracker import snapshot, usage_by_day
 from app.router.selector import describe_chain, get_routing_config
 from app.settings import settings
 
@@ -114,6 +121,53 @@ def quota_control(provider: str, action: str) -> dict[str, Any]:
         return {"ok": False, "error": f"bilinmeyen işlem: {action}"}
     state = get_state(provider)
     return {"ok": True, "provider": provider, "health": state.health}
+
+
+# --- Faz 7: oturum geçmişi, arama, kullanım grafiği, kalıcı hafıza --------
+# UI'sı yok (bilinçli — bkz. NEXT_PHASE.md); bu uçlar sadece veriyi verir.
+
+
+@app.get("/api/sessions")
+def sessions(limit: int = 50) -> dict[str, Any]:
+    """Oturum listesi, en yeni önce. `title` boşsa ilk kullanıcı mesajından."""
+    return {"sessions": list_sessions(limit=limit)}
+
+
+@app.get("/api/sessions/{session_id}/messages")
+def session_messages(session_id: str) -> dict[str, Any]:
+    """Bir oturumun tam kaydı (tool mesajları dahil)."""
+    return {"session_id": session_id, "messages": get_session_messages(session_id)}
+
+
+@app.get("/api/search")
+def search(q: str = "", limit: int = 50) -> dict[str, Any]:
+    """Tüm oturumlardaki mesajlarda basit metin araması (spec §9 Faz 7)."""
+    return {"query": q, "results": search_messages(q, limit=limit)}
+
+
+@app.get("/api/usage/graph")
+def usage_graph(days: int = 14) -> dict[str, Any]:
+    """Gün × sağlayıcı kırılımında istek/token sayıları (spec §9 Faz 7
+
+    "kullanım grafiği"). Görselleştirme yapmıyor, veriyi veriyor.
+    """
+    return {"days": days, "points": usage_by_day(days=days)}
+
+
+@app.get("/api/memory")
+def memory_notes() -> dict[str, Any]:
+    """`remember` aracının yazdığı kalıcı notlar (spec §6.2)."""
+    return {"notes": list_notes()}
+
+
+@app.delete("/api/memory/{key}")
+def memory_note_delete(key: str) -> dict[str, Any]:
+    """Yanlış/eskimiş bir notu silmek için — `remember`in kendisi bir
+
+    "forget" aracı olarak tanımlanmadı (spec §6.2), bu yüzden silme burada,
+    bir API/yönetim işlemi olarak duruyor.
+    """
+    return {"ok": delete_note(key), "key": key}
 
 
 @app.websocket("/ws/chat")

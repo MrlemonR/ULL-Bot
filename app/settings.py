@@ -55,6 +55,18 @@ class Settings(BaseSettings):
     # Bir tur içinde en fazla kaç farklı sağlayıcı denenir (429 sonrası devir).
     max_provider_attempts: int = 3
 
+    # --- Faz 5: local model (Ollama) ---
+    # LiteLLM'in `ollama_chat/` provider'ı bu adresi kullanıyor
+    # (config/litellm.desktop.yaml → `chat-local`). Laptop profilinde bu,
+    # masaüstündeki Ollama'ya LAN üzerinden bağlanmak için değiştirilebilir
+    # (spec §5.1) — ama o opsiyon varsayılan kapalı, Faz 6'yı bekliyor.
+    ollama_host: str = "http://localhost:11434"
+    # Elle kapatma anahtarı: VRAM'i oyun/Blender'a bırakmak için, ya da
+    # laptop profilinde local'i baştan devre dışı bırakmak için (spec §5.1
+    # "laptop profilinde local tamamen çıkarılır" — Faz 6'da profil bazlı
+    # otomatikleşecek, o güne kadar bu manuel anahtar).
+    enable_local: bool = True
+
     @property
     def data_dir(self) -> Path:
         data_dir = Path(user_data_dir("ai-orchestrator", roaming=False))

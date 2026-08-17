@@ -34,6 +34,44 @@ model_list:
       model: gemini/gemini-3.5-flash-lite
       api_key: os.environ/GEMINI_API_KEY
 
+  # Faz 5: yerel model (Ollama, spec §5.5). `ollama_chat/` kullanılıyor
+  # (`ollama/` değil) — tool-calling'i destekleyen chat-completion uç noktası
+  # bu (canlı denendi: `list_dir` şemasıyla doğru `tool_calls` üretti).
+  # `keep_alive: 5m` VRAM'i oyun/Blender açıkken uzun süre işgal etmesin diye
+  # kısa tutuluyor (spec §5.5, §11 "16 GB RAM + oyun/Blender ile VRAM
+  # çakışması"). Model adı canlı denendi (2026-08-16): RTX 5060/8GB'da GPU'da
+  # (Vulkan backend — bkz. DECISIONS.md "Ollama GPU backend'i") tool-calling
+  # dahil çalışıyor. `routing.yaml` → `trivial` ve `tool_use` (son çare).
+  #
+  # `repeat_penalty`/`max_tokens`: küçük/quantize modellerde ara sıra görülen
+  # bilinen bir bozulma var — tekrar cezası olmadan (Ollama'nın bu modeldeki
+  # varsayılanı 1.0, `ollama ps`/sunucu loglarında doğrulandı) bazen aynı
+  # tokenı defalarca üretip duruyor (canlı gözlendi: "HAHAHA..." 438 token).
+  # `repeat_penalty: 1.15` bunu büyük ölçüde önlüyor (birkaç canlı denemede
+  # tutarlı, tutarlı cevaplar geldi); `max_tokens` yine de bir üst sınır —
+  # ceza işe yaramazsa bile döngü sonsuza gitmesin.
+  - model_name: chat-local
+    litellm_params:
+      model: ollama_chat/qwen2.5:3b-instruct
+      api_base: os.environ/OLLAMA_HOST
+      keep_alive: "5m"
+      repeat_penalty: 1.15
+      max_tokens: 512
+
+  # Faz 5: "genel local iş" için önerilen 7-8B sınıfı (spec §5.5). Şu an
+  # hiçbir `task_type` zincirine BAĞLANMADI — mevcut görev tiplerinin hiçbiri
+  # "yerel ama büyük" bir katmana ihtiyaç duymuyor (reasoning/code zaten
+  # bulut modellerine gidiyor, trivial küçük modelle yetiyor). Burada duruyor
+  # ki elle test edilebilsin / ileride bir görev tipine bağlanabilsin.
+  # Model adı canlı denendi (2026-08-16): GPU'da, tool-calling dahil çalışıyor.
+  - model_name: chat-local-big
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b-instruct
+      api_base: os.environ/OLLAMA_HOST
+      keep_alive: "5m"
+      repeat_penalty: 1.15
+      max_tokens: 512
+
   # Faz 1'den kalan takma ad. Seçici devre dışı kalırsa (ya da düz bir test
   # isteği atılırsa) kullanılan varsayılan.
   - model_name: chat-default

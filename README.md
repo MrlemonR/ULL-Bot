@@ -7,7 +7,7 @@ implementation decisions made along the way see [DECISIONS.md](./DECISIONS.md).
 Picking the work back up in a fresh session? Start at
 [NEXT_PHASE.md](./NEXT_PHASE.md).
 
-Current status: **Phase 3 — multi-provider + quota tracking** (see spec §9).
+Current status: **Phase 7 — polish (backend complete, UI pending)** (see spec §9).
 
 ## Setup
 
@@ -62,29 +62,84 @@ Open http://localhost:8080 and send a message. The chat runs over a WebSocket
 | `list_dir` | List a directory | safe |
 | `search_files` | Search file contents (ripgrep) | safe |
 | `run_shell` | Run a shell command | decided per command |
+| `remember` | Write a persistent note (`key`/`value`) that survives across sessions | safe |
 
 Every call goes through the safety policy first, and every call is written to
-the audit log.
+the audit log. `remember` is the one exception to "the agent can change your
+system" — it only writes a row to ULL-Bot's own SQLite database, so it's rated
+`safe` and runs regardless of `DRY_RUN`. There's no separate "recall" tool:
+every note gets embedded in the system prompt on every turn (see "Memory,
+history, and usage" below), so the model just sees it as ambient context.
+
+**What the agent still can't do:** there's no `write_file`, `edit_file`, or
+`delete_file` tool. The only way it changes files today is `run_shell` (e.g.
+an approved `rm` or a redirect) — which means there's no trash/undo yet:
+an approved destructive shell command really executes. That's a known,
+explicitly-deferred gap, not an oversight — see DECISIONS.md.
 
 ## Providers and quota
 
-Three free providers are wired up. `config/routing.yaml` holds the order they
-are tried in; `config/litellm.<profile>.yaml` maps each abstract name to a real
-model. The orchestrator never names a provider SDK — it only knows `chat-groq`,
-`chat-openrouter`, `chat-gemini`.
+`config/routing.yaml` holds the order providers are tried in *per task type*
+(see "Router" below); `config/litellm.<profile>.yaml` maps each abstract name
+to a real model. The orchestrator never names a provider SDK — it only knows
+`chat-groq`, `chat-openrouter`, `chat-gemini`, `chat-gemini-lite`, `chat-local`.
 
-| Provider | Model | Free limits (2026-08-16) | Where the numbers come from |
+| Provider label | Model | Free limits (2026-08-16) | Where the numbers come from |
 |---|---|---|---|
 | Groq | `llama-3.3-70b-versatile` | 30 req/min, 12K tok/min, 1000 req/day | published docs (local counting — see below) |
 | OpenRouter | `openai/gpt-oss-20b:free` | 20 req/min, 50 req/day (1000 if the account ever bought $10 of credit) | published docs + `GET /api/v1/key` probe |
-| Gemini | `gemini-3.5-flash` | **not published** — per-account | local counter only |
+| Gemini | `gemini-3.5-flash` | 5 req/min, 20 req/day | per-account panel, local counter only |
+| Gemini (lite) | `gemini-3.5-flash-lite` | 15 req/min, 500 req/day | same panel — not a real second provider, see below |
+| Ollama (local) | `qwen2.5:3b-instruct` | no quota, VRAM-bound | runs on your GPU, no API key |
+
+`gemini_lite` isn't a real second provider — it's a bookkeeping label so the
+20-req/day `flash` and the 500-req/day `flash-lite` don't share one quota
+bucket. Both use the same `GEMINI_API_KEY`. See DECISIONS.md → "Gemini'nin iki
+modeli".
 
 Google no longer publishes free-tier numbers; they are per account and readable
 at https://aistudio.google.com/rate-limit. The values in `config/quotas.yaml`
 were read off that page rather than guessed (spec §12) — if you use a different
-account, replace them. Note how tight Gemini is: 20 requests a *day* on
-`3.5-flash`. `3.5-flash-lite` allows 500, which is what phase 4's task routing
-is for.
+account, replace them.
+
+## Router (task classification)
+
+Every message is classified by a rule-based `app/router/classifier.py` — no
+LLM call, so it costs nothing (see DECISIONS.md → "Sınıflandırıcı kural
+tabanlı, LLM değil"). Length and keywords decide the `task_type`
+(`trivial`, `tool_use`, `reasoning`, `long_context`, `code`, `vision`), and
+`config/routing.yaml` maps each one to its own provider chain — a greeting
+goes to a cheap/local model, a long document goes to the provider with the
+biggest context window, and so on. Quota/cooldown filtering still applies on
+top of whichever chain gets picked — classification narrows the candidate
+list, it never bypasses availability checks.
+
+Run `uv run python scripts/discover_models.py --openrouter` to see which
+OpenRouter models are currently free, if you want to add one to a chain.
+
+## Local model (Ollama)
+
+Optional, but `trivial` messages and the `tool_use` last resort use it before
+falling back to a cloud provider, so with it enabled some traffic keeps
+working offline. Arch:
+
+```bash
+sudo pacman -S ollama
+# GPU backend (pick one — Vulkan is much smaller and close to CUDA speed
+# for llama.cpp inference; the base ollama package is CPU-only):
+sudo pacman -S ollama-vulkan   # or: sudo pacman -S ollama-cuda (pulls the full CUDA toolkit)
+sudo systemctl enable --now ollama
+
+ollama pull qwen2.5:3b-instruct   # ~2 GB, what chat-local uses by default
+```
+
+`uv run python scripts/discover_models.py --local` reads your GPU's VRAM
+(`nvidia-smi`) and tells you which model sizes fit. `ENABLE_LOCAL=false` in
+`.env` turns it off entirely (e.g. to free VRAM for a game) without touching
+`routing.yaml` — the router just treats it as unavailable and moves to the
+next candidate, the same way it handles a 429. `OLLAMA_HOST` points at the
+Ollama server (`http://localhost:11434` by default; can point at a LAN
+machine, though that's wired for phase 6's laptop profile, not used yet).
 
 **How a provider is picked.** For each candidate in the chain: no API key →
 skipped; manually disabled → skipped; in cooldown after a 429 → skipped;
@@ -167,6 +222,36 @@ shell calls are escalated to `confirm` even when they look harmless.
 - **The agent runs as you**, not as a separate `aiagent` user. That's a
   deployment concern, planned with the systemd units in phase 7.
 
+## Profiles (desktop / laptop)
+
+`PROFILE` in `.env` picks which block of `config/routing.yaml` is used and,
+separately, which LiteLLM config file you point the proxy at:
+
+```bash
+PROFILE=laptop uv run uvicorn app.main:app --port 8080
+uv run litellm --config config/litellm.laptop.yaml --port 4000
+```
+
+Both need to agree — `PROFILE` doesn't pick the LiteLLM file for you, so
+`config/litellm.laptop.yaml` has to be passed explicitly to the `--config`
+flag. The two `litellm.*.yaml` files declare the same models (a test checks
+this doesn't drift); the difference is entirely in `routing.yaml`, where the
+`laptop` block never lists `ollama` as a candidate. That's static, not a
+runtime check — `ENABLE_LOCAL=true` on a laptop still won't offer it, because
+the chain it would need to appear in doesn't include it at all.
+
+The LAN option from spec §5.1 (a laptop using the desktop's Ollama over the
+network instead of running its own) is wired but **off**, and untested beyond
+"the code path exists": `OLLAMA_HOST` can point at any address, but the
+desktop's own Ollama only listens on `127.0.0.1` by default (checked with
+`ss -ltnp`), so it isn't reachable from the LAN yet. Turning that on means
+overriding `OLLAMA_HOST=0.0.0.0:11434` for the desktop's `ollama.service`
+(`systemctl edit ollama`) — a real exposure decision, so it wasn't done
+automatically. If you want it, do that, then add
+`{provider: ollama, model: chat-local}` to `routing.yaml`'s `laptop.trivial` /
+`laptop.tool_use` blocks and point the laptop's `.env` `OLLAMA_HOST` at the
+desktop's LAN IP.
+
 ## Configuration
 
 Everything lives in `.env` (see `.env.example`).
@@ -181,6 +266,9 @@ Everything lives in `.env` (see `.env.example`).
 | `SHELL_TIMEOUT_SECONDS` | `30` | Per-command timeout |
 | `RESERVE_RATIO` | `0.1` | Reserve share of a quota; below it a provider is dropped before a 429 |
 | `MAX_PROVIDER_ATTEMPTS` | `3` | How many providers one turn may try after 429s |
+| `OLLAMA_HOST` | `http://localhost:11434` | Where the local model server is |
+| `ENABLE_LOCAL` | `true` | Master switch for the local model — `false` removes it from every chain |
+| `PROFILE` | `desktop` | Which block of `routing.yaml` to use — see "Profiles" above |
 
 The quota numbers themselves are not env vars — they live in
 `config/quotas.yaml` with a source link and a date next to each block, because
@@ -195,9 +283,19 @@ uv run pytest
 Covers the safety policy (every blocked pattern, obfuscation, path traversal,
 symlink escape), the tools, the agent loop (step limit, output truncation,
 approval flow), prompt injection — including a test where the model
-deliberately obeys an injected `rm -rf ~` and the policy stops it — and the
-phase 3 additions: window maths for all three reset styles, header parsing,
-cooldowns, and provider selection including the 429-mid-turn switch.
+deliberately obeys an injected `rm -rf ~` and the policy stops it — the
+phase 3 additions (window maths for all three reset styles, header parsing,
+cooldowns, and provider selection including the 429-mid-turn switch), the
+phase 4 classifier and its wiring into the agent loop, the phase 5 local
+model gate (`ENABLE_LOCAL`, no quota ceiling, laptop profile never offers it),
+phase 6's config consistency checks (the two `litellm.*.yaml` files declare
+the same models; every `routing.yaml` entry actually resolves to one of them;
+`laptop` never references `ollama`, even statically in the YAML), and phase
+7's memory store + `remember` tool + its injection into the system prompt,
+plus the new REST endpoints (`tests/test_api.py`, using FastAPI's
+`TestClient` — no server process needed). None of these hit the real Ollama
+server or providers — `FakeLLM` stands in, so `uv run pytest` needs no
+network access and no GPU.
 
 ## Why Docker isn't required
 
@@ -213,12 +311,74 @@ SQLite is written to a platform-appropriate data directory by default
 `%LOCALAPPDATA%\ai-orchestrator\orchestrator.db` on Windows). Override with
 `DB_PATH` in `.env` if you want a different location.
 
+## Memory, history, and usage (phase 7)
+
+These are backend-only — data and REST endpoints, no UI (see "What's not
+built yet" below).
+
+**Persistent memory.** The `remember` tool writes to `memory_notes`
+(key/value, upsert on repeat keys). Every note gets rendered into the system
+prompt on every turn under a "Remembered notes" section — there's no separate
+recall step. `GET /api/memory` lists them, `DELETE /api/memory/{key}` removes
+one (there's no `forget` tool; deleting a note is a management action, not
+something the model decides to do on its own).
+
+**Session history.** Every message was already being written to SQLite since
+phase 1 — phase 7 just exposes it: `GET /api/sessions` lists sessions
+(newest first, title derived from the first user message if none was set),
+`GET /api/sessions/{id}/messages` returns the full record for one session
+(tool messages included, unlike what gets replayed to the model).
+
+**Search.** `GET /api/search?q=...` does a plain SQL `LIKE` over message
+content across all sessions. Not full-text search (no FTS5 virtual table) —
+for a single person's chat history that's more machinery than the problem
+needs; see DECISIONS.md if that stops being true.
+
+**Usage graph.** `GET /api/usage/graph?days=14` aggregates `usage_events` by
+day and provider (requests, tokens, rate-limited count, error count). Same
+table `/api/quota` already reads from — this just groups it differently. No
+chart is rendered anywhere; it's a data endpoint for a UI to build on.
+
+## Deployment (systemd --user)
+
+`systemd/*.service` + `ull-bot.target` run the two long-lived processes
+(LiteLLM proxy, FastAPI app) as your own user — no separate system account,
+no sudo. `scripts/install.sh` does `uv sync`, creates `.env` if missing, and
+installs the units into `~/.config/systemd/user/` with the placeholder repo
+path filled in; it does **not** enable or start anything, and does not touch
+`.env` if one already exists — you run:
+
+```bash
+./scripts/install.sh
+systemctl --user enable --now ull-bot.target   # only when you're ready
+```
+
+`journalctl --user -u ull-bot-api -u ull-bot-litellm -f` for logs. Ollama
+itself stays a separate system service (`sudo systemctl enable --now ollama`,
+set up in phase 5) — it's not part of this target, since it isn't specific to
+ULL-Bot and other things on the machine might use it.
+
+## What's not built yet
+
+Deliberately out of phase 7's scope (see NEXT_PHASE.md for the reasoning
+behind each):
+
+- **A UI for any of the above.** Sessions, search, and the usage graph are
+  data endpoints only — nothing renders them.
+- **Trash / undo / `write_file` / `edit_file` / `delete_file`.** Still only
+  `run_shell` can change files, and an approved destructive command really
+  runs. Not assigned to any numbered phase in the spec — flagged, not solved.
+- **A separate system user for the agent.** It runs as you.
+- **The LAN Ollama option** for the laptop profile (spec §5.1) — wired but
+  untested beyond a single machine; see the "Profiles" section above.
+
 ## Roadmap
 
 - [x] Phase 1 — skeleton + single provider
 - [x] Phase 2 — tools + safety
 - [x] Phase 3 — multi-provider + quota tracking
-- [ ] Phase 4 — router (task classification: trivial / reasoning / code / …)
-- [ ] Phase 5 — local model
-- [ ] Phase 6 — profiles (desktop/laptop)
-- [ ] Phase 7 — polish
+- [x] Phase 4 — router (task classification: trivial / reasoning / code / …)
+- [x] Phase 5 — local model
+- [x] Phase 6 — profiles (desktop/laptop)
+- [x] Phase 7 — polish (memory, history, search, usage graph, systemd,
+      install script — all backend; UI intentionally not built here)

@@ -1,0 +1,24 @@
+[Unit]
+Description=ULL-Bot — LiteLLM proxy
+# Faz 7 (spec §9): systemd user service. Sudo GEREKMEZ — bu bir --user
+# birimi, kullanıcının kendi hesabı altında çalışır (spec §11'deki "ayrı
+# sistem kullanıcısı" maddesiyle karıştırma, o hâlâ hiçbir fazda yok).
+PartOf=ull-bot.target
+
+[Service]
+Type=simple
+# __ULL_BOT_DIR__ scripts/install.sh tarafından gerçek repo yoluna
+# değiştirilir (bkz. install.sh). Elle kuruyorsan burayı kendin düzelt.
+WorkingDirectory=__ULL_BOT_DIR__
+Environment="PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+# `.env` burada elle exportlanmıyor — `uv run litellm` zaten CWD'deki
+# `.env`'i kendi başına okuyor (python-dotenv üzerinden; canlı doğrulandı:
+# temiz bir ortamda `env -i` ile çalıştırılıp gerçek bir chat isteği
+# denendi, API anahtarları `.env`den geldi — bkz. DECISIONS.md).
+ExecStart=uv run litellm --config config/litellm.desktop.yaml --port 4000
+# Laptop profilindeysen: --config config/litellm.laptop.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=ull-bot.target
