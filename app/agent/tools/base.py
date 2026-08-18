@@ -30,6 +30,11 @@ class ToolContext:
     # Bağlama daha önce güvenilmeyen içerik (dosya/web) girdi mi? Girdiyse
     # kabuk çağrıları bir seviye yükseltilir (spec §6.4, prompt injection).
     tainted: bool = False
+    # Bu TURDA yapılmış arama sorguları (normalize edilmiş). `AgentLoop` her
+    # tur için yeni bir `ToolContext` kuruyor, yani liste tur bitince düşüyor.
+    # Zayıf modellerin aynı sorguyu döndürüp durmasını kesmek için (bkz.
+    # `app/agent/tools/web.py` → `WebSearch.run`).
+    searched: list[str] = field(default_factory=list)
 
 
 @dataclass

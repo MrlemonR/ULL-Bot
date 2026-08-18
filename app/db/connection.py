@@ -13,6 +13,14 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # (tablo, sütun, ALTER ifadesi)
     ("provider_state", "note", "ALTER TABLE provider_state ADD COLUMN note TEXT"),
+    # Faz 8b'de Google OAuth denendi ve kaldırıldı (bkz. DECISIONS.md);
+    # sütun duruyor çünkü SQLite'ta sütun silmek tabloyu yeniden yazmayı
+    # gerektiriyor ve bu alanın bir maliyeti yok. Hep 'password'.
+    (
+        "mail_accounts",
+        "auth_type",
+        "ALTER TABLE mail_accounts ADD COLUMN auth_type TEXT DEFAULT 'password'",
+    ),
 )
 
 

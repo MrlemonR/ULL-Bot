@@ -1,0 +1,59 @@
+# SearXNG — ULL-Bot'un yerel arama sağlayıcısı.
+#
+# Bu dosya SearXNG'nin KENDİ varsayılanlarının ÜSTÜNE biniyor
+# (`use_default_settings: true`); burada yazmadığın her şey varsayılan kalır.
+#
+# Neden gerekli: `web_search` DuckDuckGo kazımasıyla çalışıyordu ve DDG bu
+# makinenin IP'sini engelledi. SearXNG bir META-arama: sorguyu birden çok
+# motora paralel soruyor, biri düşünce arama bitmiyor. Üstelik kota yok,
+# anahtar yok ve sorgular üçüncü bir tarafa gitmiyor.
+
+use_default_settings: true
+
+server:
+  # Konteyner İÇİNDEKİ port. İmajın uygulama sunucusu 8080'i dinliyor ve bunu
+  # buradan değiştiremiyoruz; bu değer sadece SearXNG'nin ürettiği bağlantılar
+  # için. Dışarıdan erişim host tarafında 8888'e eşleniyor (compose dosyası) —
+  # uygulamanın API'si 8080'de, LiteLLM 4000'de olduğu için host'ta 8888.
+  port: 8080
+  # DİKKAT: burası konteynerin İÇİ. `127.0.0.1` yazarsan Docker'ın port
+  # yönlendirmesi çalışmaz — istek host'tan geldiği için konteynerin loopback
+  # arayüzüne hiç düşmez ve "connection reset" alırsın.
+  #
+  # Dışarı açılmayı host tarafında kısıtlıyoruz: compose dosyasındaki
+  # `127.0.0.1:8888:8888` eşlemesi portu yalnızca bu makineye veriyor.
+  # Bu önemli: SearXNG'yi dışarı açmak onu herkesin kullanabileceği açık bir
+  # arama proxy'sine çevirir; motorlar da IP'yi kötüye kullanım sanıp
+  # engeller — yani bizim asıl derdimizi geri getirir.
+  bind_address: "0.0.0.0"
+  secret_key: "c30b82c60cb4b4d79211d2c3e2ad5aa3ee7835788146253eef358799710e9cc2"
+  # Limiter bot koruması: tarayıcı çerezi/JS beklediği için API çağrılarını
+  # 429 ile reddeder. Sunucu sadece localhost'a bağlı olduğu için kapalı
+  # olması güvenlik kaybı değil — dışarıdan zaten kimse ulaşamıyor.
+  limiter: false
+  public_instance: false
+
+search:
+  # KRİTİK: `json` burada olmazsa SearXNG HTML döner, `app/web/search.py`
+  # ayrıştıramaz ve sessizce Tavily'ye düşeriz. Varsayılan sadece `html`.
+  formats:
+    - html
+    - json
+  # Ajan Türkçe soruyor; yerel sonuçlar daha isabetli.
+  default_lang: "tr"
+  # Bir motor yavaşsa tüm aramayı bekletmesin — ajan zaten adım adım
+  # çalışıyor ve uzun bekleme turu düşürüyor.
+  max_request_timeout: 10.0
+
+# Motor seçimi: hepsi varsayılan olarak açık; aşağıdakiler bilinçli kapalı.
+engines:
+  # DDG bu makinenin IP'sini zaten engelledi (NEXT_PHASE.md §3a). Açık
+  # kalırsa her aramada boşuna 20 sn timeout bekletir.
+  - name: duckduckgo
+    disabled: true
+  # Mojeek captcha döndürüyordu — aynı sebep.
+  - name: mojeek
+    disabled: true
+
+ui:
+  default_locale: "tr"

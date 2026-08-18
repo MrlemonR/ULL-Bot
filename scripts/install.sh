@@ -47,10 +47,32 @@ done
 systemctl --user daemon-reload
 
 echo
-echo "== Bitti =="
-echo "Servisler kuruldu ama BAŞLATILMADI. Şunu sen çalıştır (sudo gerekmez):"
+echo "-- masaüstü kısayolu (Faz 8) --"
+DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$DESKTOP_DIR"
+sed "s|^Exec=.*|Exec=$REPO_DIR/scripts/ull-bot|" "scripts/ull-bot.desktop" \
+    > "$DESKTOP_DIR/ull-bot.desktop"
+chmod +x "$REPO_DIR/scripts/ull-bot"
+echo "yazıldı: $DESKTOP_DIR/ull-bot.desktop"
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+fi
+
 echo
-echo "    systemctl --user enable --now ull-bot.target"
+echo "== Bitti =="
+echo
+echo "İKİ ÇALIŞTIRMA YOLU VAR, ikisi de kuruldu ama HİÇBİRİ başlatılmadı:"
+echo
+echo "  1) Masaüstü uygulaması (servisler uygulamayla birlikte açılır/kapanır):"
+echo "         ./scripts/ull-bot"
+echo "     ya da uygulama menüsünden 'ULL-Bot'."
+echo
+echo "  2) Servisler arka planda sürekli açık kalsın istiyorsan (systemd):"
+echo
+echo "         systemctl --user enable --now ull-bot.target"
+echo
+echo "     Bu ikisi çakışmaz: systemd servisleri açıksa uygulama onları"
+echo "     benimser ve kapanırken durdurmaz."
 echo
 echo "Laptop profilindeysen önce systemd/ull-bot-litellm.service'teki"
 echo "--config satırını 'litellm.laptop.yaml' yapıp $SYSTEMD_USER_DIR'a"

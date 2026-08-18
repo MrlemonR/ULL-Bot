@@ -17,6 +17,25 @@ from app.safety import sandbox
 from app.settings import Settings, settings
 
 
+@pytest.fixture(autouse=True)
+def _izole_ortam(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
+    """HER test için: gerçek veritabanından ve gerçek `.env` sırlarından ayır.
+
+    İki şeyi birden kapatıyor:
+
+    1. **Veri güvenliği.** `db_path` varsayılan olarak tmp'ye çevriliyor, yani
+       fixture kullanmayı unutan bir test bile kullanıcının gerçek
+       `orchestrator.db`'sine yazamaz. (Kendi fixture'ını kuran testler
+       bunun üstüne yazar; monkeypatch'te son atama kazanır.)
+    2. **Belirlenimcilik.** Testler, geliştiricinin `.env`'inde ne yazdığına
+       göre farklı sonuç vermemeli — bu dosyanın en başından beri savunduğu
+       ilke (aşağıdaki sağlayıcı anahtarları notuna bak). Bu bir kez
+       ihlal edildi ve dört test kırıldı; kural artık burada.
+    """
+    monkeypatch.setattr(settings, "db_path", str(Path(tmp_path) / "autouse.db"))
+    yield
+
+
 @pytest.fixture
 def workspace(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
     """İzinli bir çalışma alanı + izole DB/audit dizini kur.

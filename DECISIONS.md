@@ -155,11 +155,37 @@ belgesi. `NEXT_PHASE.md`den farkı: `NEXT_PHASE.md` "bir sonraki faza nasıl
 devam edilir" diye devir notu, `FAZ7_TESLIM.md` ise "UI'ı kuracak birinin
 backend'i baştan okumadan bilmesi gereken her şey" diye bir referans.
 
-**Sıradaki adım: UI** (kullanıcı bunu ayrı yapacak, spec'te numaralı bir faz
-değil — Faz 7'nin "cila" listesindeki maddeler zaten burada bitti). Yeni bir
-konuşmaya başlıyorsan bu dosyayı değil, **[`NEXT_PHASE.md`](./NEXT_PHASE.md)**
-ve **[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)** dosyalarını oku. Bu dosya "neden
-böyle yapılmış" arşivi; oradan buraya link veriliyor.
+**Faz 8 tamamlandı — UI + mail + takvim** (2026-08-17). Spec'te numaralı bir
+faz değil; kullanıcının UI konuşmasında istediği kapsam. Üç parça:
+
+1. **Masaüstü uygulaması.** `app/desktop/` — pywebview + WebKitGTK ile native
+   pencere, açılışta LiteLLM ve FastAPI'yi çocuk süreç olarak başlatan,
+   kapanışta durduran bir süpervizör. Kullanıcının isteği birebir buydu:
+   "servisleri uygulama açılınca açılıp uygulama kapanınca kapanmasını
+   istiyorum". systemd yolu (Faz 7) silinmedi, ikisi bir arada çalışıyor.
+2. **Mail (IMAP).** Google API/OAuth **yok** — kullanıcının açık kararı.
+   `app/mail/` (imap_client / parser / classify / store / service / secrets),
+   7 ajan aracı, kural tabanlı kategori + isteğe bağlı LLM ikinci geçişi.
+3. **Takvim (uygulamanın kendisi).** Google Calendar/CalDAV yok.
+   `app/calendar/` (ics / store / service), 6 ajan aracı, mailden toplantı
+   çıkarma (ICS varsa kesin, yoksa Türkçe/İngilizce metin tahmini),
+   hatırlatmalar OS'un kendi bildirim sistemine (dunst) gidiyor.
+
+`web/` tamamen yeniden yazıldı: sol şerit + Sohbet/Mail/Takvim/Kota/Geçmiş/
+Ayarlar, Mail ve Takvim'de yanda bağlamlı sohbet kutusu. 429 test geçiyor.
+
+Gerekçe detayları aşağıda ayrı başlıklarda: "Masaüstü kabuğu: pywebview",
+"Süpervizör: benimseme ve kalıntı temizliği", "Mail: IMAP, Google API değil",
+"Takvim: kendi takvimimiz", "Mail kategorisi: kural önce, LLM sonra",
+"Faz 8 kabul testi".
+
+Ayrıca **[`FAZ8_TESLIM.md`](./FAZ8_TESLIM.md)** yazıldı — yeni API yüzeyi,
+araçlar ve UI yapısının referansı. `FAZ7_TESLIM.md` **değişmedi**, WebSocket
+protokolü aynı.
+
+**Sıradaki adım:** bkz. **[`NEXT_PHASE.md`](./NEXT_PHASE.md)**. Yeni bir
+konuşmaya başlıyorsan bu dosyayı değil onu ve `FAZ8_TESLIM.md`i oku. Bu dosya
+"neden böyle yapılmış" arşivi; oradan buraya link veriliyor.
 
 
 Bu dosya, spesifikasyonda belirtilmeyen ama uygulama sırasında verilen kararları
@@ -910,3 +936,619 @@ eklemediği için gerekiyordu.
 geçmişi). `usage_events` ve `provider_state` şeması hazır duruyor; bu
 tablolara yazma mantığı Faz 3'ün (`quota/tracker.py`) sorumluluğu — şimdiden
 kısmi/tahmini bir sayaç mantığı eklenmedi ki Faz 3 tasarımıyla çakışmasın.
+
+---
+
+## Masaüstü kabuğu: pywebview (Faz 8)
+
+**Karar:** Native pencere `pywebview` + sistemin WebKitGTK'sı ile açılıyor.
+Electron ve Tauri değerlendirildi, ikisi de alınmadı.
+
+**Gerekçe:** Kullanıcı "web arayüzü olmadan bir uygulama olarak çalışsın"
+dedi — yani adres çubuğu, sekme, tarayıcı menüsü olmayan bir pencere. Üç
+seçenek vardı:
+
+- **Electron:** node + npm bağımlılığı, ~150 MB Chromium, ayrı bir build
+  adımı. Proje şu ana kadar saf Python/uv; ikinci bir paket yöneticisi
+  eklemek her kurulum ve her CI adımını ikiye katlardı.
+- **Tauri:** Rust toolchain'i ve bir build adımı ister; arka planda yine
+  WebKitGTK kullanıyor, yani bu makinede pywebview'le aynı motoru daha
+  fazla kurulum maliyetiyle elde ederdik.
+- **pywebview:** `uv add pywebview`, derleme yok, WebKitGTK zaten kurulu
+  (`webkit2gtk-4.1`, doğrulandı). Süreç yönetimi de Python'da kalıyor —
+  süpervizör aynı süreçte, aynı dilde.
+
+**Bedeli:** `gi` (PyGObject) bir sistem paketi ve venv'de görünmüyor
+(`include-system-site-packages = false`). PyPI'dan kurmak derleme
+bağımlılıkları isterdi; onun yerine `launcher._ensure_system_gi()` sistem
+`site-packages`ını `sys.path`e ekliyor. `uv sync` bunu bozmuyor çünkü venv'e
+hiçbir şey yazılmıyor.
+
+## GDK arka ucu: sınayıp seç (Faz 8)
+
+**Karar:** Pencere açılmadan önce, ayrı bir süreçte, gerçek bir WebView
+kurulumu sınanıyor (`launcher.configure_backend()`); geçmezse `GDK_BACKEND=x11`
+ile tekrar sınanıyor.
+
+**Gerekçe:** Canlı testte uygulama Hyprland/Wayland'de `Gdk-Message: Error 71
+(Protocol error) dispatching to Wayland display` verip **öldü** — üstelik
+kapanış temizliğimizi çalıştırmadan, yani servisler yetim kaldı. Teşhis:
+sorun GTK3'ün Wayland desteği değil, **WebKit'in DMA-BUF renderer'ıymış**;
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` ile native Wayland sorunsuz çalışıyor.
+
+Sınama neden düz bir GTK penceresiyle değil, WebView'lı: düz bir GTK3
+penceresi bu makinede Wayland'de sorunsuz açılıyordu; hata ancak içine bir
+`WebKit2.WebView` konunca çıkıyor. Sınama gerçek yapılandırmayı kurmazsa
+yanlış cevap verir.
+
+Kullanıcı `GDK_BACKEND`i kendi ayarladıysa dokunulmuyor.
+
+## Süpervizör: benimseme ve kalıntı temizliği (Faz 8)
+
+**Karar:** Süpervizör (a) zaten dinlenen bir portu görürse o servisi
+"benimser" — başlatmaz ve kapanışta **durdurmaz**; (b) başlattığı servisleri
+`data_dir/services.json`a yazar ve bir sonraki açılışta sahipsiz kalanları
+toplar.
+
+**Gerekçe (a):** Faz 7'nin systemd birimleri hâlâ duruyor ve kullanıcı onları
+`enable` etmiş olabilir. Uygulamayı kapatmak, kullanıcının arka planda
+sürekli çalışmasını istediği servisleri öldürmemeli. Kural tek cümle:
+**açmadığımız şeyi kapatmayız.**
+
+**Gerekçe (b):** Nazik kapanış her zaman çalışmaz. GDK protokol hatasında
+süreci doğrudan `exit()` ile bitiriyor, `kill -9` de aynısını yapıyor;
+ikisinde de Python'un `finally` bloğu çalışmıyor ve çocuk süreçler (kendi
+süreç gruplarında oldukları için) hayatta kalıyor. Bu canlı olarak yaşandı.
+Durum dosyası bunun ağını kuruyor.
+
+PID geri dönüşümüne karşı `/proc/PID/cmdline` kontrol ediliyor — kayıttaki
+numara artık bambaşka bir programa ait olabilir ve onu öldürmek kabul
+edilemez.
+
+**`PR_SET_PDEATHSIG` neden kullanılmadı:** Linux'ta bu sinyal, çocuğu
+oluşturan **thread** öldüğünde tetikleniyor, süreç öldüğünde değil.
+Süpervizörü pywebview'in boot thread'i çağırıyor ve o thread açılıştan hemen
+sonra bitiyor — servisler daha uygulama açılırken ölürdü.
+
+## Mail: IMAP, Google API değil (Faz 8)
+
+**Karar:** Mail erişimi IMAP üzerinden; Gmail API / OAuth yok.
+
+**Gerekçe:** Kullanıcının açık talebi ("google ile bi bağlantısı olmasın imap
+ile gidebiliriz"). Pratik sonucu: kurulum Google Cloud Console'da proje +
+OAuth client oluşturmayı değil, tek bir uygulama parolası girmeyi gerektiriyor.
+Bedeli: Gmail etiketleri yerine IMAP klasörleri, ve kategoriler bizim
+tarafımızda kalıyor (telefondaki Gmail'e yansımıyor).
+
+**Parola nerede durur:** Sistem anahtarlığı (libsecret/`secret-tool`), o
+yoksa `data_dir` altında 0600 bir dosya. SQLite'a **asla** yazılmıyor —
+`mail_accounts.secret_backend` sadece "parola nerede" der. Böylece
+veritabanını yedeklemek/kopyalamak parolayı sızdırmıyor.
+
+**Neden yerel önbellek:** UI ve ajan araçları hep SQLite'tan okuyor, IMAP'e
+gitmiyor. Liste görünümü ağ beklemiyor, sunucu erişilemezken de geçmiş
+maillere bakılabiliyor, ve kategori/özet gibi bizim ürettiğimiz alanların
+yaşayacağı bir yer oluyor (IMAP'te böyle bir alan yok).
+
+**Yazma yönü:** Okundu işaretleme ve taşıma **önce IMAP'e**, başarılı olursa
+önbelleğe. Ters sırada yapılsaydı sunucuya ulaşılamayan bir anda UI gerçekte
+olmayan bir durumu gösterirdi.
+
+## Mail kategorisi: kural önce, LLM sonra (Faz 8)
+
+**Karar:** Gelen her mail kural tabanlı sınıflandırıcıdan geçiyor
+(`app/mail/classify.py`); LLM sadece kuralın kararsız kaldıklarına ve sadece
+kullanıcı isteyince (UI'da ayrı bir düğme) çağrılıyor.
+
+**Gerekçe:** Gelen her mail için model çağırmak kotanın en aptalca harcanma
+yolu. Maillerin çoğu başlıklardan **kesin** olarak sınıflanıyor:
+`text/calendar` eki varsa toplantı davetı, `List-Unsubscribe` varsa bülten,
+`no-reply@` göndericiyse otomatik bildirim. Bu, `app/router/classifier.py`nin
+sohbet için kurduğu düzenin aynısı (bkz. "Sınıflandırıcı kural tabanlı, LLM
+değil").
+
+Kural **sırası** kilitli ve testlerle korunuyor (`tests/test_mail_classify.py`):
+takvim eki her şeyi yener, konudaki "fatura" gövdedeki "toplantı"yı yener,
+otomatik gönderici kontrolü fatura/toplantıdan **sonra** gelir (yoksa
+`noreply@stripe.com`den gelen fatura "bildirim" olurdu).
+
+## Takvim: kendi takvimimiz (Faz 8)
+
+**Karar:** Etkinlikler kendi SQLite'ımızda; Google Calendar/CalDAV
+entegrasyonu yok. Dışarıyla alışveriş ICS ile.
+
+**Gerekçe:** Kullanıcının kararı ("takvim için uygulamanın kendi takvim
+bölümü olucak"). Telefona senkron şimdilik yok, sonraya bırakıldı.
+
+**`icalendar` paketi neden eklenmedi:** İhtiyacımız olan alt küme küçük
+(VEVENT, DTSTART/DTEND/DURATION, SUMMARY, DESCRIPTION, LOCATION, ATTENDEE,
+UID, VALARM'ı atlamak). Elle yazılan ayrıştırıcı ~200 satır ve tamamı
+testlerle kapalı. RRULE (tekrarlayan etkinlik) **desteklenmiyor** — bir davet
+RRULE taşıyorsa ilk oluşumu alınıyor ve kullanıcıya bunun bir seri olduğu
+söyleniyor.
+
+**Zaman biçimi:** Her şey ofsetli ISO8601 olarak saklanıyor, UTC'ye
+çevrilmiyor. Hatırlatıcı ve takvim ızgarası yerel saatle çalışıyor; ofseti
+korumak yaz saati geçişlerinde de doğru sonucu veriyor.
+
+## Takvim araçları neden `safe` (Faz 8)
+
+**Karar:** `create_event`/`update_event`/`mail_to_event` riski `safe`,
+`delete_event` ise `confirm`. `move_mail` de `confirm` ve dry-run'a uyuyor.
+
+**Gerekçe:** Dry-run ve onay katmanının koruduğu şey "ajanın **kullanıcının
+makinesini** değiştirmesi" (spec §6). Uygulamanın kendi SQLite'ına bir satır
+yazmak o kategoride değil — bu, `remember` aracıyla birebir aynı durum ve o
+da `safe` (bkz. `tools/memory.py`). Her takvim eklemesinde onay diyaloğu
+açmak akışı, kullanıcının asıl istediği şeyi ("meetingler için calendara
+meeting eklicek") kullanılmaz hâle getirirdi.
+
+`confirm` olanlar farklı: `delete_event` geri alınamaz (çöp kutusu henüz yok
+— bkz. NEXT_PHASE.md), `move_mail` ise **dış** bir sistemde (IMAP sunucusu)
+gerçekleşiyor.
+
+## Mail içeriği düşman girdidir (Faz 8)
+
+**Karar:** `read_mail`/`list_mail` çıktısı **her zaman** `untrusted=True`
+dönüyor; özetleme istemi de maili `<email untrusted="true">` bloğuna sarıyor.
+
+**Gerekçe:** Faz 2'de kurulan prompt injection savunmasının (bkz. "Prompt
+injection: işaretleme + risk yükseltme") doğal devamı. Bir dosyanın içeriği
+düşman olabilirdi; bir mailin içeriği **tanım gereği** düşmandır — onu yazan
+kişi kullanıcı değil. Ajan döngüsü bu çıktıyı görünce oturumu `tainted`
+işaretliyor ve sonraki kabuk çağrıları bir seviye sıkılaşıyor.
+
+## Faz 8 kabul testi (canlı, 2026-08-17)
+
+Gerçek modellerle, gerçek servislerle sürüldü. **İki gerçek hata bu testte
+yakalandı ve düzeltildi:**
+
+1. **Model, önizleme aracını çağırıp "ekledim" dedi.** `inspect_mail_meeting`
+   hiçbir şey kaydetmiyor ama model iki toplantı için sadece onu çağırıp
+   kullanıcıya "her ikisi de takvime eklendi" yanıtını verdi. Araç
+   açıklamasını sertleştirmek tek başına yetmedi; **çıktının kendisine** ne
+   YAPMADIĞI ve sıradaki çağrının ne olduğu yazıldı
+   ("ÖNİZLEME — bu araç takvime HİÇBİR ŞEY EKLEMEDİ … şimdi
+   `mail_to_event(mail_id=N)` çağır"). Tekrarda model doğru zinciri kurdu.
+   Kilitleyen test: `test_inspect_araci_kaydetmedigini_ve_sonraki_adimi_soyler`.
+2. **Model mail id'sini tahmin etti.** "Fatura mailini özetle" denince
+   `list_mail` çağırmadan `summarize_mail(id=2)` dedi ve yanlış maili
+   özetledi. Araç açıklamalarına ve sistem promptuna "id'yi asla uydurma,
+   önce `list_mail`" eklendi.
+
+Ayrıca birim testleri sırasında yakalanan iki kod hatası:
+
+3. **`VALARM` etkinliğin açıklamasını eziyordu.** ICS ayrıştırıcısı iç
+   bileşenleri atlamıyordu; gerçek Google Calendar davetlerinde VEVENT'in
+   içinde her zaman bir VALARM var ve onun `DESCRIPTION`ı etkinliğinkinin
+   üstüne yazılıyordu. Ayrıştırıcıya iç içe derinlik sayacı eklendi.
+4. **Türkçe'de saat kayboluyordu.** "20.08.2026 **tarihinde saat** 14:00"
+   biçiminde tarih ile saat arasındaki köprü kalıba girmiyordu; saat
+   düşüyor ve etkinlik varsayılan 09:00'a kayıyordu — kullanıcı bunu ancak
+   yanlış saatte bildirim gelince fark ederdi. Ortak bir `_CONNECTOR` kalıbı
+   yazıldı, 9 gerçek yazım varyantı testle sabitlendi.
+
+Doğrulanan davranışlar:
+
+```
+servis yaşam döngüsü: start_all → :4000 ve :8080 açıldı (2.9 sn),
+  stop_all → ikisi de kapandı (0.2 sn), YETİM SÜREÇ YOK
+benimseme: elle başlatılmış bir :8080 varken start_all onu benimsedi,
+  stop_all ona DOKUNMADI, kendi başlattığı litellm'i durdurdu
+bildirim: 2 dakika sonrasına 5 dk önceden hatırlatmalı etkinlik →
+  hatırlatıcı döngüsü dunst bildirimini gönderdi ve `reminded_at` yazdı;
+  gelecekteki etkinlik tetiklenmedi
+UI: headless tarayıcıda 29 kontrol, JS hatası YOK — takvim ızgarası 42 hücre,
+  mail 4 filtre, kota 3 sağlayıcı kartı, ayarlar 4 panel, hesap diyaloğu
+  Gmail ön ayarı, ctrl+1 kısayolu
+sohbet → takvim: "Yarın saat 16:30'a Dişçi randevusu ekle, 20 dk önceden
+  hatırlat" → create_event(starts_at=2026-08-18T16:30, reminder_minutes=20)
+sohbet → mail: list_mail → inspect_mail_meeting → mail_to_event zinciri,
+  iki toplantı da takvime eklendi; ICS'li olan %100 (okundu), düz metinli
+  olan %95 (tahmin) güvenle
+özet: fatura maili özetlendi → "249,90 TL, son ödeme 28.08.2026" (doğru)
+```
+
+## `hidden` niteliği ve `display` bildirimi çakışması (Faz 8, kullanıcı bildirdi)
+
+**Belirti:** Uygulama açıldığında arayüzün tamamı sönük görünüyordu ve
+hiçbir şeye tıklanmıyordu. Kullanıcı ekran görüntüsüyle bildirdi.
+
+**Sebep:** Onay diyaloğunun kaplaması (`<div class="modal-backdrop"
+id="modal-backdrop" hidden>`) hiç gizlenmiyordu. HTML'in `hidden` niteliği
+UA stylesheet'teki `[hidden] { display: none }` kuralıyla çalışır ve bu
+kural author stylesheet'teki **her** `display` bildirimi tarafından ezilir.
+`style.css`teki `.modal-backdrop { display: grid; ... }` tam olarak bunu
+yapıyordu. Sonuç: `rgba(5,7,11,0.8)` bir örtü tüm sayfayı kaplıyor
+(`z-index: 90`), yani
+
+- her renk `0.2 × asıl + 0.8 × (5,7,11)` oluyordu — ölçüldü: zemin
+  `#0b0e14` (11,14,20) yerine (6,8,13), metin (230,…) yerine (50,…);
+- ve örtü tüm tıklamaları yutuyordu, uygulama kullanılamaz haldeydi.
+
+Ekran görüntüsündeki "gizemli yatay çizgi" de bunun parçasıydı: boş
+`#modal` kutusunun 2px kenarlığı (`--line-strong`, `width: min(560px,100%)`).
+
+Aynı tuzak `.dock-context` (`display: flex`, JS'ten `hidden` ile gizleniyor)
+için de geçerliydi.
+
+**Düzeltme:** `style.css`in en başına tek bir kural:
+
+```css
+[hidden] { display: none !important; }
+```
+
+`!important` burada doğru araç — amacın kendisi sonraki tüm `display`
+bildirimlerini yenmek.
+
+**Neden testler yakalamadı — asıl ders.** Faz 8'in UI doğrulaması headless
+tarayıcıda 51 kontrol çalıştırdı ve hepsi geçti. Çünkü hepsi
+`element.click()` ile JS'ten tetikliyordu: bu, DOM olayını doğrudan hedefe
+gönderir ve **hit-testing'i atlar**. Sayfayı kaplayan görünmez bir örtü
+böyle bir testte hiç görünmez.
+
+Bunun üzerine iki koruma eklendi:
+
+1. `tests/test_web_assets.py` — `[hidden]` kuralının varlığını, kaplamanın
+   `hidden` ile başladığını, `.empty` yerleşimini ve CSS değişkenlerinin
+   tanımlılığını statik olarak kontrol ediyor (tarayıcı gerektirmiyor).
+2. Canlı doğrulamada artık `Input.dispatchMouseEvent` ile **gerçek fare
+   olayı** ve `document.elementFromPoint` ile ulaşılabilirlik kontrolü
+   yapılıyor. Düzeltme sonrası: sol şerit düğmeleri, besteci, gönder
+   düğmesi ve ipuçları "ULAŞILABİLİR", gerçek tıklamayla Mail paneline
+   geçilip bir mail açıldı.
+
+## Boş durum dikeyde dağılıyordu (Faz 8, aynı raporla)
+
+`.empty` kuralı `display: grid; place-items: center; height: 100%` idi.
+`place-items` öğeleri kendi grid alanlarının ortasına koyar, ama örtük
+satırlar kabın yüksekliğini eşit böler — ölçüldü: `gridTemplateRows:
+162px 146px 163px`. Yani ikon, başlık ve metin 8px gap yerine ~150px
+arayla duruyordu; ekranda sayfa yarım yüklenmiş gibi görünüyordu.
+
+Düzeltme: `align-content: center` (satırları içeriğe göre paketleyip
+topluca ortalar). Sonrası: `40px 23px 40px`, aralar 10px.
+
+Aynı turda küçük metinlerin kontrastı da ölçüldü ve `--text-3` (#6d7789)
+koyu zeminde **3.97:1** çıktı — WCAG AA küçük metin için 4.5:1 istiyor ve
+sol şerit etiketleri gerçekten okunmuyordu. `--text`/`--text-2`/`--text-3`
+bir tık açıldı; ölçülen yeni oranlar 5.83:1 ile 17.20:1 arasında.
+
+## Hesap ekleme Google ile karşılıyor (Faz 8b, kullanıcı isteği)
+
+**İstek:** "hesap ekle dediğimiz zaman orda direk google butonu çıksın,
+google kısmına gidelim hesabı seçelim o gerisini halletsin."
+
+**Yapılan:** Diyalog artık OAuth yapılandırılmışsa **Google düğmesiyle
+açılıyor** — e-posta yazmak gerekmiyor. IMAP formu altta katlı duruyor
+(`Başka bir hesap ekle (IMAP) ▾`). Yapılandırma yoksa sıra tersine
+dönüyor: düğme kapalı, nedeni yazılı ve IMAP formu açık başlıyor.
+
+"Gerisini halletsin" tarafı zaten backend'de hazırdı: `add_google_account()`
+adresi `userinfo`dan okuyor, sunucuyu `imap.gmail.com:993` olarak sabitliyor,
+yenileme jetonunu anahtarlığa yazıyor **ve kaydetmeden önce jetonun IMAP'te
+gerçekten çalıştığını doğruluyor** — Workspace yöneticisi IMAP'i kapatmışsa
+bu ancak orada anlaşılır; başarısızsa jeton geri alınıyor, yarım hesap
+bırakılmıyor.
+
+**Cloud Console kurulumu canlı doğrulandı** (2026-08-17): üretilen
+yetkilendirme adresi sunucu tarafından Google'a GET'lendi; Google isteği
+kabul edip hesap seçici sayfasına yönlendirdi. Yani `client_id`, kayıtlı
+yönlendirme adresi (`http://127.0.0.1:8080/api/mail/oauth/callback`) ve
+kapsamlar tutarlı. Bu kontrol `redirect_uri_mismatch` / `invalid_client`
+gibi hataları kullanıcı düğmeye basmadan önce görmenin ucuz yolu.
+
+### Hata sonucu da pencereye taşınıyor
+
+Kullanıcı akış sırasında iki ayrı yerde: onay ekranı **tarayıcıda**,
+uygulama penceresi ise sonucu yokluyor. İlk sürümde `exchange_code()`
+yalnızca BAŞARIYI `pending.result`a yazıyordu; bir hata olsa tarayıcıda
+sayfa görünüyor ama uygulama penceresi sonsuza kadar "Bekleniyor…" diyordu.
+`set_pending_result()` eklendi, callback hem başarıyı hem hatayı yazıyor,
+UI hatayı gösterip düğmeyi tekrar açıyor. Ayrıca 5 dakikalık bir tavan var.
+
+## Testler `.env`e bağlı olmamalı — autouse izolasyon (Faz 8b)
+
+Kullanıcı `.env`e gerçek `GOOGLE_CLIENT_ID`/`SECRET` ekleyince **dört test
+kırıldı**: "OAuth yapılandırılmamışken şöyle davranmalı" diyen testler
+gerçek ayarları okuyordu. `conftest.py` bu ilkeyi zaten sağlayıcı
+anahtarları için savunuyordu (bkz. `workspace` fixture'ının docstring'i) ama
+liste eksikti.
+
+Çözüm: `conftest.py`ye **autouse** bir `_izole_ortam` fixture'ı. İki şeyi
+birden kapatıyor:
+
+- `google_client_id`/`secret` boşaltılıyor → testler geliştiricinin
+  makinesinde de CI'da da aynı sonucu veriyor. OAuth'un açık olmasını
+  isteyen testler değeri kendi fixture'larında set ediyor.
+- `db_path` tmp'ye çevriliyor → fixture kurmayı unutan bir test bile
+  kullanıcının gerçek `orchestrator.db`'sine yazamıyor.
+
+İkincisi bir varsayımı doğrulamak için "kanarya" yöntemiyle sınandı: gerçek
+veritabanına bir satır yazıldı, tüm paket çalıştırıldı, satır yerinde kaldı.
+(Faz 8 sırasında görülen veri kaybının kaynağı testler değil, geliştirme
+sırasında elle çalıştırılan temizlik komutlarıydı.)
+
+## Google OAuth, kişisel Gmail için pratik değil (Faz 8b, canlı bulgu)
+
+**Ne oldu:** Kullanıcı Cloud Console kurulumunu tamamlayıp "Google ile
+bağlan"a bastı ve `403: access_denied` aldı — "ULL-Bot, Google doğrulama
+sürecini tamamlamadı. Yalnızca geliştirici tarafından onaylanan test
+kullanıcıları erişebilir." Kullanıcının cevabı: "bunu her kullanıcı için
+tek tek izin vermek istemiyorum."
+
+**Araştırma sonucu (Google dokümanı, 2026-08 itibarıyla doğrulandı):**
+
+| Onay ekranı durumu | Kim bağlanabilir | Yenileme jetonu |
+|---|---|---|
+| Testing + External | yalnızca elle eklenen test kullanıcıları (≤100) | **7 günde bir iptal** |
+| In production + External | herkes | süresiz — ama bu kapsam için Google DOĞRULAMASI şart |
+| Internal (Workspace) | yalnızca organizasyon üyeleri | süresiz, test listesi yok |
+
+Kritik ayrıntı: 7 günlük iptal, yalnızca ad/e-posta/profil isteyen
+uygulamalar için geçerli DEĞİL — biz `https://mail.google.com/` istiyoruz
+(Gmail IMAP'i daha darını kabul etmiyor) ve o "restricted" bir kapsam.
+Yani **test kullanıcısı eklemek kalıcı bir çözüm değil**: hesap haftada bir
+kopar. "Production"a almak ise bu kapsam için güvenlik denetimi (CASA)
+gerektiriyor — kişisel bir araç için pratik değil.
+
+**Sonuç:** Kişisel Gmail adresleri için doğru mekanizma **uygulama
+parolası**dır; OAuth'un buradaki sürtünmesi Google'ın kısıtlı Gmail
+kapsamları için bilinçli politikası. Workspace adresleri için OAuth
+kullanılabilir hâle geliyor — ama yalnızca Cloud projesi o organizasyona
+aitse ve onay ekranı `Internal` yapılırsa.
+
+**Kodda yapılan:** OAuth kaldırılmadı (kullanıcı "ikisi de olsun" demişti,
+ve Internal senaryosunda gerçekten çalışıyor). Bunun yerine hata yolu
+kullanıcıyı çıkmazda bırakmayacak hâle getirildi:
+
+- `oauth.explain_error()` ham kodu yapılabilir bir açıklamaya çeviriyor.
+  `access_denied` özellikle iki farklı sebebi ayırıyor ve **7 gün tuzağını
+  açıkça söylüyor** — bunu söylemezsek kullanıcı bir hafta sonra "mail
+  neden durdu" diye geri döner.
+- Hata hem tarayıcı sayfasına hem uygulama penceresine gidiyor; pencerede
+  doğrudan "Uygulama parolasıyla ekle (önerilen)" düğmesi çıkıyor ve IMAP
+  formunu açıyor.
+- Ayarlar'daki OAuth paneli bu tuzağı **denemeden önce** uyarıyor.
+
+Dersin genel hâli: bir dış servisin politikası bizim kod kalitemizle
+çözülemiyorsa, doğru davranış onu gizlemek değil, kullanıcıya maliyetini
+zamanında ve açıkça söylemek.
+
+## HTML mail gövdesi: kum havuzu + engelli uzak resimler (Faz 8c)
+
+**Belirti:** Kullanıcı "resimler görünmüyo" dedi ve gönderdiği ekran
+görüntüsünde mail, "Unfortunately, your email client cannot display HTML"
+uyarısıyla dolu düz metin olarak duruyordu.
+
+**Sebep:** `body_html` kaydediliyordu ama UI yalnızca `body_text` gösteriyordu.
+Bu kutuda **200 mailin 194'ünde HTML gövdesi var** — yani neredeyse her mail
+bozuk görünüyordu, üstelik göndericilerin düz metin alternatifine koyduğu
+uyarı yüzünden kullanıcı haklı olarak uygulamayı kusurlu sanıyordu.
+
+**Çözüm (`web/js/mailbody.js`):** İki katmanlı savunmayla HTML render.
+
+1. **Temizleme.** `DOMParser` ile (regex DEĞİL — regex tabanlı HTML
+   temizleyiciler kaçırmakla ünlü): `<script>`, `<iframe>`, `<object>`,
+   `<form>`, `on*` öznitelikleri ve `javascript:` adresleri siliniyor.
+2. **Kum havuzu.** Gövde `sandbox` nitelikli bir `<iframe srcdoc>` içinde.
+   `allow-scripts` **verilmiyor**, yani içeride hiçbir betik çalışamaz.
+   `allow-same-origin` veriliyor ki ana sayfa iframe'e erişip bağlantı
+   tıklamalarını yakalayabilsin (sistem tarayıcısına yönlendirmek için) —
+   betik çalışamadığı için bu kombinasyon güvenli. İkisi BİRLİKTE
+   verilseydi mail içindeki bir betik ana sayfaya erişebilirdi; test
+   bunu kilitliyor.
+
+**Uzak resimler varsayılan ENGELLİ.** Pazarlama maillerindeki resimler çoğu
+zaman takip pikselidir: yüklenmesi göndericiye "bu kişi maili şu saatte
+açtı" bilgisini verir. Thunderbird ve Gmail de aynısını yapıyor. Kullanıcı
+tek tıkla açabiliyor; CSP'deki `img-src` o zaman genişliyor.
+
+Engellenen resim, `src`i silinmek yerine **saydam 1px** ile değiştiriliyor:
+`src`siz bir `<img>` tarayıcıyı "bozuk resim" moduna sokup alt metnini tam
+boyutta basıyor ve 30 tanesi sayfayı dolduruyordu.
+
+## `.stage`de eksik `min-height: 0` — kaydırmayı tamamen bozuyordu (Faz 8c)
+
+**Belirti:** "buralarda kaydıramıyorum."
+
+**Ölçüm:** Mail detay paneli `scrollHeight=25041 clientHeight=25041` —
+yani panel kısıtlanmak yerine içeriğine göre 25.000 piksele **büyümüştü**,
+bu yüzden kayacak bir şey yoktu; içerik ekranın altından taşıp kayboluyordu.
+
+**Sebep:** `.stage` bir grid öğesi ve grid öğelerinin varsayılan
+`min-height`ı `auto`dur — **içeriklerinin altına küçülmeyi reddederler.**
+Uzun bir HTML mail açılınca `.stage` şişti, altındaki `height: 100%`
+zincirinin tamamı o şişmiş boyu miras aldı. Zincirdeki diğer sekiz halkada
+(`.views`, `.view`, `.split`, `.split-main`, `.mail-layout`, …) bu satır
+zaten vardı; eksik olan tek yer `.stage`di, o yüzden hata gözle
+bulunamıyordu.
+
+`tests/test_web_assets.py` artık zincirdeki her halkayı tek tek kontrol
+ediyor — bu sınıf bir daha sessizce geri gelmesin.
+
+## Spam sürgünü (Faz 8c, kullanıcı isteği)
+
+> "spam mailleri tümü kısmında görünmesin, en altta spam olarak ayrı görünsün"
+
+`spam` kategorisi eklendi ama sıradan bir kategori değil: `HIDDEN_FROM_ALL`
+kümesinde ve **hiçbir genel görünüme karışmıyor** — ne "Tümü"ye, ne
+"Okunmamış"a, ne aramaya. Yalnızca kendi kategorisi seçilince görünüyor ve
+şeritte "Ayrılanlar" başlığı altında, en altta duruyor.
+
+`counts()` de buna uyuyor: `total`/`unread` spam'i saymıyor (liste 200
+gösterip rozet 307 deseydi kullanıcı haklı olarak "eksik mail var" derdi),
+ama kategori kırılımı sayıyor çünkü spam satırının kendi sayısı oradan
+geliyor.
+
+Spam kaynakları: (a) sunucunun spam klasörü — `is_spam_folder()` ve RFC 6154
+`\Junk` bayrağı, (b) `X-Spam-Flag` gibi sunucu başlıkları, (c) kullanıcının
+elle işaretlemesi ("🚫 Spam" düğmesi). Sunucunun kararı bizim kurallarımızın
+**önünde** geliyor: Gmail'in spam filtresi bizimkinden iyi ve bir spam
+mailini "fatura" diye sınıflayıp listeye sokmak kullanıcının tam da
+istemediği şey.
+
+Bir tuzak: senkron sırasında bilinen mesajların bayrakları tazelenirken
+`include_hidden=True` gerekiyor, yoksa spam'e alınmış mailler sunucuda
+okunsa bile burada okunmamış kalırdı.
+
+## Google OAuth kaldırıldı (Faz 8c)
+
+Kullanıcı "google iptal, sadece imap ile ilerleyelim … google ile ilgili
+kullanılmayan şeyleri kaldır" dedi. Kaldırılanlar: `app/mail/oauth.py`,
+`/api/mail/oauth/*` uçları, XOAUTH2 kimlik doğrulama yolu,
+`GOOGLE_CLIENT_ID`/`SECRET` ayarları, UI'daki "Google ile bağlan" düğmesi ve
+OAuth paneli, `tests/test_mail_oauth.py`.
+
+**Kalanlar** (bunlar kullanılıyor): uygulama parolası sayfasına `authuser`
+ile doğrudan link, Workspace sunucu düzeltmesi (`imap.gmail.com`), kullanıcı
+adı kilidi, parola boşluk temizleme, ve `POST /api/open-external` (maildeki
+ve takvimdeki bağlantılar da bunu kullanıyor).
+
+`mail_accounts.auth_type` sütunu duruyor ama hep `'password'`: SQLite'ta
+sütun silmek tabloyu yeniden yazmayı gerektiriyor ve bu alanın maliyeti yok.
+
+Gerekçenin tamamı bir önceki başlıkta ("Google OAuth, kişisel Gmail için
+pratik değil"): kısıtlı `mail.google.com` kapsamı yüzünden doğrulanmamış
+uygulamaların yetkilendirmeleri 7 günde bir iptal ediliyor.
+
+
+## Web arastirma: arama + sayfa okuma (Faz 9, kullanici istegi)
+
+> "internette arastirma yapmasini istiyorum ... '4000TL butcem var, bana
+> alabilecegim kulakliklari karsilastir' dedigimde bir kiyaslama versin"
+
+Eklenen: `app/web/` (arama + getirme), `app/agent/tools/web.py`
+(`web_search`, `fetch_url`), ve arayuzde **markdown tablo** destegi.
+
+### Arama motoru: DuckDuckGo, anahtarsiz
+
+Brave/Google CSE daha kararli ama kullanicidan bir hesap daha acmasini
+istiyor; projenin "ucretsiz katmanla calis" ilkesine (spec 1) aykiri.
+DDG'nin `html.duckduckgo.com` uc noktasi anahtarsiz calisiyor.
+
+**Bedeli iki tane ve ikisi de canli testte cikti:**
+
+1. **Hiz siniri.** Olculdu: iki hizli sorgudan sonra DDG **HTTP 202** ve
+   icinde "anomaly" gecen, sonucsuz bir sayfa donduruyor. 202 bir hata
+   kodu olmadigi icin ilk surum bunu "sonuc yok" saniyordu -- ve model
+   "demek ki bulamadim" deyip aramayi TEKRARLIYORDU, her tekrar siniri
+   daha da sikiyordu. Simdi: kendi kendimize 2.5 sn aralik koyuyoruz,
+   202/429/"anomaly" hiz siniri olarak taniniyor, ve hata mesaji modele
+   ne YAPMAMASI gerektigini soyluyor ("ayni sorguyu art arda tekrarlama").
+   Ayrica 5 dakikalik sorgu onbellegi var.
+2. **Bicim kirilganligi.** Resmi API degil, HTML kazima. Iki uc nokta
+   (`html` ve `lite`) ve iki ayri ayristirici var; biri bos donerse
+   digeri deneniyor. Hicbiri tutmazsa **hata firlatiliyor** -- sessizce
+   bos liste donmek modelin uydurmaya baslamasi demek.
+
+### SSRF savunmasi sart
+
+`fetch_url`'un adresini **model** seciyor ve model, az once okudugu bir
+sayfanin metninden etkilenmis olabiliyor. Yani karar dolayli olarak bir
+yabancinin etkisi altinda. Savunmasiz birakilsaydi bir sayfa modele
+`http://127.0.0.1:8080/api/mail/messages` okutup kullanicinin maillerini
+kendi ciktisina tasiyabilirdi.
+
+`app/web/fetch.py`: yalnizca http/https, yalnizca genel IP'ler (ozel,
+loopback, link-local, reserved hepsi kapali), **her yonlendirme adimi
+yeniden denetleniyor** (acik yonlendirme kapiyi atlamasin), 2 MB tavan.
+
+Bir incelik: `javascript:alert(1)` icinde `://` yok. Ilk surum "sema yok"
+sanip basina `https://` ekliyordu ve `https://javascript:alert(1)` sema
+denetiminden geciyordu. Artik sema `^scheme:` kalibiyla once taniniyor.
+
+### Markdown tablosu -- ve icinden cikan iki sessiz hata
+
+Karsilastirma cevabinin tasiyicisi tablo; desteklenmeden model dogru
+cevabi verse bile ekranda boru isaretleriyle dolu bir metin yigini
+gorunuyordu. Tablo destegi eklenirken `markdown()` icinde **iki eski hata**
+ortaya cikti:
+
+1. Blok yer tutucusu " BLOCK0 " boskuga bagliydi; paragraf kontrolu
+   `trim()` edilmis metne bosluklu kalipla bakiyordu. Sonuc: fenced kod
+   bloklari ekranda **"BLOCK0" yazisi** olarak cikiyordu. Bastan beri
+   boyleymis, modeller nadiren kod blogu urettigi icin fark edilmemis.
+2. Yer tutucu kendi paragrafinda kalmayinca tablo bir `<p>` icine
+   sariliyordu -- `<div>` bir `<p>` icinde gecersiz, tarayici paragrafi
+   erken kapatip duzeni bozuyor.
+
+Ikisi de "gozle bakinca calisiyor gibi" duran turden. `markdown()` artik
+gorunmez bir yer tutucu kullaniyor ve davranisi
+`tests/markdown_check.mjs` ile (pytest'ten Node cagrilarak) 22 iddiayla
+kilitli.
+
+## Mail govdesi beyaz zeminde cizilir (Faz 9)
+
+Kullanici "resimler gorunmuyor" derken gonderdigi ekran goruntusunde
+Google'in "Guvenlik uyarisi" maili **koyu gri metni koyu zeminde** basmis
+ve hic okunmuyordu. Sebep: gonderenlerin neredeyse tamami maili beyaz
+zemin varsayarak tasarliyor ve renkleri satir ici stillerle dayatiyor;
+`color-scheme: dark` bunu duzeltmiyor cunku `color:#202124` gibi satir ici
+degerler her seyi eziyor.
+
+Cozum, her gercek mail istemcisinin yaptigi sey: mail kendi **beyaz
+kagidinda** duruyor, uygulamanin geri kalani koyu kaliyor.
+
+## Gmail'in Spam klasoru senkronlaniyor (Faz 9)
+
+> "maile spam olarak gelenleri otomatik algilamiyo, gmail sitesinde
+> otomatik spama dusuyodu, burda da o sekilde olmasi gerek"
+
+Dogru teshis: yalnizca `INBOX` senkronlaniyordu, Gmail'in spam kutusuna
+dusenler hic gelmiyordu. Artik klasor verilmezse gelen kutusu **ve** spam
+klasoru senkronlaniyor; spam klasorunun gercek adi RFC 6154 `\Junk`
+bayragindan bulunuyor (Gmail'de bu ad hesabin diline gore degisiyor).
+
+O klasorden gelen her mail `spam` isaretleniyor ve surgun kurallarina
+takiliyor. Kendi kural setimizi Gmail'in filtresinin onune koymuyoruz --
+onunki daha iyi ve zaten kararini vermis.
+
+Canli dogrulandi: `[Gmail]/Spam`'den 8 mail geldi, hepsi `spam` oldu,
+"Tumu" sayaci onlari saymadi.
+
+
+## Kisir dongu korumasi (Faz 9, canli testte yakalandi)
+
+Canli testte zayif bir model `web_search`i **bos sorguyla** cagirdi, guvenlik
+katmani "reddedildi" dedi, model **ayni cagriyi** tekrar yapti -- ve bu adim
+limiti dolana kadar surdu. Kullanici dakikalarca cevap bekledi; her adim bir
+model cagrisi oldugu icin kota da bosa gitti.
+
+Reddedilen bir cagri kendi basina turu durdurmuyor ve durdurmamali da: model
+baska bir yol denemek isteyebilir. Durduran sey **ayni cagrinin** ust uste
+basarisiz olmasi. `AgentLoop` artik `(arac_adi, argumanlar)` imzasi basina
+basarisizlik sayiyor; 3'e ulasinca tur `stopped` olayiyla bitiyor ve
+kullaniciya ne oldugu soyleniyor.
+
+Sayac araç adina degil **ad + arguman** imzasina bakiyor: farkli sorgularla
+denemek "takilmak" degil, model yol ariyor demektir.
+
+Ayrica `web_search`/`fetch_url`un bos-arguman hatasi artik modele ne yapmasi
+gerektigini soyluyor (ornek cagri + "ayni cagriyi tekrarlama"), cunku
+"REDDEDILDI" tek basina modeli yonlendirmiyordu.
+
+## Arama guvenilirligi: kazima yetmiyor, Brave opsiyonel (Faz 9)
+
+Canli olculdu: DDG iki hizli sorgudan sonra HTTP **202** + "anomaly" sayfasi,
+Mojeek dogrudan **Captcha** donduruyor. Yani ucretsiz kazima tek basina bir
+arastirma turunu tasiyamiyor.
+
+Eklenen savunmalar (hepsi kazima yolunda):
+
+- Kendi kendimize 2.5 sn aralik (`MIN_INTERVAL`).
+- 5 dakikalik sorgu onbellegi -- model bir turda benzer sorgulari
+  tekrarliyor ve her tekrar siniri sikistiriyor.
+- Hiz siniri tespiti: 202/429/captcha/anomaly.
+- **Bir kez otomatik bekle-tekrar dene.** Ilk surumde modele "20 sn bekleyip
+  tekrar dene" diyorduk; model bekleyemiyor, hemen tekrar deniyor ve engeli
+  sikistiriyordu. Beklemeyi artik biz yapiyoruz.
+- Iki farkli DDG uc noktasi (`html` ve `lite`), iki ayri ayristirici.
+
+Ve bir cikis yolu: **`BRAVE_API_KEY`**. Resmi API, ucretsiz katmani ayda
+2000 sorgu, kredi karti istemiyor. Anahtar varsa arama ONCE Brave'i dener,
+o duserse kazimaya doner. Anahtar yoksa hicbir sey degismiyor.
+
+Bu, projenin "ucretsiz katmanla calis" ilkesini (spec 1) bozmuyor: anahtarsiz
+kurulum calismaya devam ediyor, anahtar yalnizca guvenilirligi artiriyor --
+saglayici anahtarlariyla ayni model.

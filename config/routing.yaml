@@ -49,10 +49,35 @@ profiles:
     # notu, NEXT_PHASE.md §5) — ara adımlar için en ucuz/hızlı seçenek.
     # `ollama` en sonda: spec §5.1 tablosunun son basamağı, gerçek internet
     # kesintisinde bile ajan döngüsü tamamen durmasın diye.
+    #
+    # 2026-08-17: `gemini` üçüncü sıraya EKLENDİ (spec §5.1 tablosunda yoktu).
+    # Sebep canlı: groq 429 yedi, openrouter kotası %9'a inip elendi ve geriye
+    # tek aday olarak `ollama` (qwen2.5:3b) kaldı. O model çok adımlı
+    # araştırmayı yürütemiyor — aynı sorguyu döndürüp adım limitini doldurdu
+    # ve kullanıcı iki denemede de cevap alamadı. Gemini aynı turda ilk adımı
+    # sorunsuz yaptı ve günlük ücretsiz kotası geniş.
+    #
+    # 2026-08-18: `ollama` bu zincirden ÇIKARILDI (spec §5.1'in son basamağı
+    # olmasına rağmen). Aynı gün içinde üç kez canlı gözlendi:
+    #
+    #   - bulut kotaları bitince tur qwen2.5:3b'ye kalıyor,
+    #   - model ya aynı sorguyu tekrarlayıp turu kilitliyor,
+    #   - ya da daha kötüsü: cevabı UYDURUYOR. Son denemede fiyat sütununu
+    #     boş bırakıp YouTube linklerini `watch?v=example_video_id` diye
+    #     icat etti — hem prompt "uydurma" diyordu hem de elinde gerçek
+    #     link döndüren `youtube_search` aracı vardı; ikisini de yok saydı.
+    #
+    # Uydurulmuş bir cevap, dürüst bir hata mesajından KÖTÜDÜR: kullanıcı
+    # tıklayana kadar yanlış olduğunu anlamıyor. Kotalar bittiğinde ajan
+    # artık "şu an sağlayıcı yok" diyor.
+    #
+    # `ollama` zincirlerden tamamen silinmedi: `trivial` zincirinde hâlâ ilk
+    # sırada, yani internet kesikken sohbet ve basit işler yerelde sürüyor.
+    # Araştırma turu ise 3B bir modelin yürütebileceği bir iş değil.
     tool_use:
       - {provider: groq, model: chat-groq}
       - {provider: openrouter, model: chat-openrouter}
-      - {provider: ollama, model: chat-local}
+      - {provider: gemini, model: chat-gemini}
 
     # Planlama, çok adımlı düşünme, analiz. OpenRouter'ın büyük ücretsiz
     # modeli önde (spec tablosu), Gemini yedek.
@@ -93,9 +118,12 @@ profiles:
       - {provider: gemini_lite, model: chat-gemini-lite}
       - {provider: groq, model: chat-groq}
 
+    # `gemini` burada da yedek (desktop ile aynı gerekçe); laptop'ta `ollama`
+    # olmadığı için groq+openrouter tükendiğinde tek alternatif oydu.
     tool_use:
       - {provider: groq, model: chat-groq}
       - {provider: openrouter, model: chat-openrouter}
+      - {provider: gemini, model: chat-gemini}
 
     reasoning:
       - {provider: openrouter, model: chat-openrouter}

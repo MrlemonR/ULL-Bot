@@ -7,7 +7,11 @@ implementation decisions made along the way see [DECISIONS.md](./DECISIONS.md).
 Picking the work back up in a fresh session? Start at
 [NEXT_PHASE.md](./NEXT_PHASE.md).
 
-Current status: **Phase 7 — polish (backend complete, UI pending)** (see spec §9).
+Current status: **Phase 9 — web research on top of the desktop app, mail and
+calendar** (phases 1-7 are the spec's; 8 and 9 are the UI work that followed).
+Newest surface: [FAZ9_TESLIM.md](./FAZ9_TESLIM.md) (web search, spam, HTML
+mail). Desktop app / mail / calendar: [FAZ8_TESLIM.md](./FAZ8_TESLIM.md).
+The WebSocket chat protocol is unchanged: [FAZ7_TESLIM.md](./FAZ7_TESLIM.md).
 
 ## Setup
 
@@ -31,7 +35,34 @@ you just don't get failover until you add a second.
 
 ## Running it
 
-Two processes: the LiteLLM proxy and the FastAPI app.
+### The desktop app (phase 8)
+
+```bash
+./scripts/ull-bot
+```
+
+This opens a native window (pywebview + the system's WebKitGTK — no browser
+chrome, no Electron) and **starts the two services itself**: the LiteLLM proxy
+on :4000 and the FastAPI app on :8080. Closing the window stops both.
+
+`./scripts/install.sh` also drops a `.desktop` entry, so "ULL-Bot" shows up in
+your application menu. Like everything else that script does, it installs but
+does not start anything.
+
+If a service is already listening on its port — because you enabled the
+systemd units below — the supervisor **adopts** it: it won't start a second
+copy, and it won't stop it when the window closes. The two ways of running
+this don't fight each other.
+
+Services without a window (for debugging):
+
+```bash
+uv run python -m app.desktop.supervisor
+```
+
+Supervisor logs live in `~/.local/share/ai-orchestrator/logs/`.
+
+### Or start the two processes yourself
 
 **1. LiteLLM proxy** (no Docker required — runs directly via `uv`):
 
@@ -63,13 +94,40 @@ Open http://localhost:8080 and send a message. The chat runs over a WebSocket
 | `search_files` | Search file contents (ripgrep) | safe |
 | `run_shell` | Run a shell command | decided per command |
 | `remember` | Write a persistent note (`key`/`value`) that survives across sessions | safe |
+| `list_mail` | List cached mail, filtered by category / unread / text | safe |
+| `read_mail` | Read one message in full | safe (output is **untrusted**) |
+| `sync_mail` | Pull new mail from the IMAP server | safe |
+| `summarize_mail` | Summarize a message with a model; result is cached | safe |
+| `mark_mail` | Mark read/unread or flagged (written to IMAP too) | safe |
+| `categorize_mail` | Change a message's category (local label only) | safe |
+| `move_mail` | Move a message to another IMAP folder / trash | confirm |
+| `list_events` | List calendar events in a date range | safe |
+| `create_event` | Add an event (absolute `starts_at` required) | safe |
+| `update_event` | Change an existing event | safe |
+| `delete_event` | Delete an event (no undo) | confirm |
+| `mail_to_event` | Turn a meeting mail into a calendar event | safe |
+| `inspect_mail_meeting` | Preview what would be extracted — **saves nothing** | safe |
+| `web_search` | Search the web (Brave API if keyed, else DuckDuckGo) | safe (output is **untrusted**) |
+| `fetch_url` | Read a web page as text; SSRF-guarded | safe (output is **untrusted**) |
 
 Every call goes through the safety policy first, and every call is written to
-the audit log. `remember` is the one exception to "the agent can change your
-system" — it only writes a row to ULL-Bot's own SQLite database, so it's rated
-`safe` and runs regardless of `DRY_RUN`. There's no separate "recall" tool:
-every note gets embedded in the system prompt on every turn (see "Memory,
-history, and usage" below), so the model just sees it as ambient context.
+the audit log.
+
+The `safe` ratings on `remember`, `create_event` and friends follow one rule:
+writing a row to ULL-Bot's *own* SQLite database is not "the agent changing
+your system", so it isn't what `DRY_RUN` and the approval dialog exist to
+guard. The `confirm` ones are different — `move_mail` acts on a real IMAP
+server, and `delete_event` can't be undone (there's no trash yet).
+
+There's no separate "recall" tool for memory: every note gets embedded in the
+system prompt on every turn (see "Memory, history, and usage" below), so the
+model just sees it as ambient context.
+
+**Mail and web content are treated as hostile input.** Whoever wrote an email
+or a web page is not the user, so `read_mail`, `list_mail`, `web_search` and
+`fetch_url` output always comes back marked `untrusted` — the agent loop wraps it in `<tool_result untrusted="true">` and
+marks the session tainted, which tightens subsequent shell calls. The
+summarizer wraps the message the same way.
 
 **What the agent still can't do:** there's no `write_file`, `edit_file`, or
 `delete_file` tool. The only way it changes files today is `run_shell` (e.g.
@@ -358,16 +416,69 @@ itself stays a separate system service (`sudo systemctl enable --now ollama`,
 set up in phase 5) — it's not part of this target, since it isn't specific to
 ULL-Bot and other things on the machine might use it.
 
+## Mail and calendar (phase 8)
+
+**Mail is IMAP**, authenticated with an app password. Google OAuth was built
+and then removed: Gmail's IMAP only accepts the restricted
+`https://mail.google.com/` scope, and Google revokes authorizations for
+unverified apps every 7 days — a mail client that breaks weekly is worse than
+no OAuth at all. See DECISIONS.md for the full reasoning.
+
+Add an account under Settings → Mail. Type your address and the dialog works
+out the server, then — for Gmail and Google Workspace addresses — shows a
+link that opens Google's app-password page **with that account preselected**.
+Paste the 16-character password back in; spaces are stripped, so you can
+paste it exactly as Google displays it.
+
+Three traps the dialog closes, because all three were hit in practice:
+
+- **Username must be the full email**, not your display name. Gmail rejects
+  anything else, so the field is locked to the address (and moved behind
+  "Gelişmiş" — you rarely need it).
+- **Workspace addresses use `imap.gmail.com`**, not `imap.yourcompany.com`.
+  One click fixes it.
+- **App passwords need 2-Step Verification on.** If Google says the setting
+  is unavailable, that's why — or, on a Workspace account, your admin has
+  disabled app passwords and IMAP entirely. The dialog links to both.
+
+Mail is rendered as real HTML in a sandboxed iframe with scripting disabled
+and the markup stripped of `<script>`, `<iframe>`, `<form>` and event
+handlers. **Remote images are blocked by default** — in marketing mail they
+are usually tracking pixels that tell the sender when you opened it. One
+click loads them for that message.
+
+Incoming mail is sorted by a rule-based classifier into `toplantı`, `iş`,
+`fatura`, `bülten`, `bildirim`, `kişisel`, `diğer`, `spam`. Rules are free and
+most mail is decided outright by headers (a `text/calendar` part means a
+meeting invite; `List-Unsubscribe` means a newsletter). A model is only asked
+about the ones the rules couldn't decide, and only when you press the button.
+
+**Spam is exiled, not filtered.** It never appears in "Tümü", "Okunmamış" or
+search — only under its own category, at the bottom of the sidebar. The
+server's own verdict wins over ours: anything from the IMAP Junk folder or
+carrying an `X-Spam-Flag` header is spam regardless of what our rules think.
+
+**The calendar is this app's own** — it does not sync to Google or to a phone.
+Import/export is ICS. A meeting mail becomes an event either exactly (when the
+mail carries an ICS invite) or by extracting a date from the text (Turkish and
+English), in which case you get a confidence score and a chance to correct it
+before saving. Recurring series (RRULE) are not supported: only the first
+occurrence is added, and you're told it was a series.
+
+**Reminders go to your OS notifier**, not to a window we draw — `dunstify` if
+present, otherwise `notify-send`. Whichever daemon you run (dunst, mako, GNOME,
+KDE) handles the styling, position and timeout.
+
 ## What's not built yet
 
-Deliberately out of phase 7's scope (see NEXT_PHASE.md for the reasoning
-behind each):
+See NEXT_PHASE.md for the reasoning behind each:
 
-- **A UI for any of the above.** Sessions, search, and the usage graph are
-  data endpoints only — nothing renders them.
 - **Trash / undo / `write_file` / `edit_file` / `delete_file`.** Still only
   `run_shell` can change files, and an approved destructive command really
   runs. Not assigned to any numbered phase in the spec — flagged, not solved.
+- **Phone notifications.** Reminders are desktop-only; pushing them to a
+  phone was explicitly deferred.
+- **Sending or replying to mail.** Read, mark and move only.
 - **A separate system user for the agent.** It runs as you.
 - **The LAN Ollama option** for the laptop profile (spec §5.1) — wired but
   untested beyond a single machine; see the "Profiles" section above.
@@ -382,3 +493,6 @@ behind each):
 - [x] Phase 6 — profiles (desktop/laptop)
 - [x] Phase 7 — polish (memory, history, search, usage graph, systemd,
       install script — all backend; UI intentionally not built here)
+- [x] Phase 8 — desktop app (services start/stop with the window), IMAP mail
+      with rule-based sorting and on-demand summaries, the app's own calendar
+      with meeting extraction from mail, and desktop reminders

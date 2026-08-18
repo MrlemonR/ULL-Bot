@@ -1,9 +1,14 @@
 model_list:
   # Orchestrator bu soyut adlarla konuşur; hangi sağlayıcının arkada olduğu
   # sadece burada yaşar (spec §1). Seçimi `config/routing.yaml` + selector yapar.
+  # 2026-08-17: `llama-3.3-70b-versatile` Groq'ta KALDIRILDI. Hesabın model
+  # listesinde artık yok ve her çağrı LiteLLM 404 döndürüyordu — router her
+  # turda groq'u seçip 404 yiyor, sonra zayıf yerel modele düşüyordu.
+  # Yerine `openai/gpt-oss-120b`: canlı denendi (araç çağrısı üretti), bu
+  # hesapta listelenen en güçlü sohbet modeli.
   - model_name: chat-groq
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
 
   - model_name: chat-openrouter
@@ -98,9 +103,9 @@ router_settings:
   # sayacı yanlış kalırdı. Sağlayıcı devri Faz 3'te orchestrator'ın işi.
   num_retries: 0
 
-# NOT: Model isimleri 2026-08-16'da sağlayıcıların canlı dokümanlarından
-# alındı, uydurulmadı (spec §12):
-#   - groq/llama-3.3-70b-versatile   -> console.groq.com/docs/rate-limits
+# NOT: Model isimleri sağlayıcıların canlı listelerinden alındı, uydurulmadı
+# (spec §12):
+#   - groq/openai/gpt-oss-120b       -> Groq GET /openai/v1/models (2026-08-17)
 #   - openai/gpt-oss-20b:free        -> OpenRouter GET /api/v1/models (Faz 1)
 # Ücretsiz model listesi sık değişir; bir model kalkarsa sadece bu dosyadaki
 # `model:` satırı güncellenir, orchestrator kodu etkilenmez.

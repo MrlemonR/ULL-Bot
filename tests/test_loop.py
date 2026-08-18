@@ -351,3 +351,176 @@ async def test_tool_step_uses_tool_use_task_type(workspace: Path, all_providers)
     # tekrar basılmaz; asıl kanıt ikinci LLM çağrısında hangi modelin
     # kullanıldığı.
     assert llm.seen_models[-1] == tool_use_first.model
+
+
+# --- boş sağlayıcı cevabı (canlı yakalandı) -------------------------------
+
+
+async def test_bos_cevap_saglayici_hatasi_sayilir(
+    workspace: Path, all_providers, local_enabled
+) -> None:
+    """Boş cevap turu bitirmemeli — sıradaki sağlayıcı denenmeli.
+
+    OpenRouter'ın ücretsiz modeli ara sıra ne metin ne araç çağrısı
+    döndürüyor. Eski davranış bunu geçerli bir "cevap" sayıp `done`
+    yayımlıyordu: kullanıcı araçların çalıştığını görüyor, sonra hiçbir şey
+    gelmiyordu. Canlı görüldü — "4 adım sürdü, sonuç vermedi".
+    """
+    llm = FakeLLM(LLMResponse(content=""), LLMResponse(content="işte karşılaştırma"))
+    rec = Recorder()
+    answer = await build(workspace, llm, rec).run("kulaklıkları karşılaştır")
+
+    assert answer == "işte karşılaştırma"
+    assert llm.calls == 2, "boş cevaptan sonra ikinci sağlayıcı denenmeliydi"
+    done = rec.of_type("done")
+    assert len(done) == 1 and rec.of_type("error") == []
+
+
+async def test_sadece_bosluk_iceren_cevap_da_bos_sayilir(
+    workspace: Path, all_providers, local_enabled
+) -> None:
+    """`"\\n\\n"` gibi bir cevap kullanıcı için boş ekrandan farksız."""
+    llm = FakeLLM(LLMResponse(content="   \n  "), LLMResponse(content="gerçek cevap"))
+    rec = Recorder()
+    assert await build(workspace, llm, rec).run("dene") == "gerçek cevap"
+    assert llm.calls == 2
+
+
+async def test_hepsi_bos_donerse_kullanici_hata_goruyor(
+    workspace: Path, all_providers, local_enabled
+) -> None:
+    """Sessizce bitmek en kötüsü: kullanıcı neden cevap gelmediğini bilmeli."""
+    llm = FakeLLM(*[LLMResponse(content="") for _ in range(12)])
+    rec = Recorder()
+    answer = await build(workspace, llm, rec).run("dene")
+
+    assert answer == ""
+    errors = rec.of_type("error")
+    assert errors and "boş cevap" in errors[0]["message"]
+    assert rec.of_type("done") == [], "boş turda `done` yayımlanmamalı"
+
+
+# --- bağlam bütçesi -------------------------------------------------------
+
+
+def _tool_msg(index: int, size: int) -> dict:
+    return {"role": "tool", "tool_call_id": str(index), "name": "fetch_url",
+            "content": f"sayfa {index} " + "x" * size}
+
+
+def test_eski_arac_ciktilari_kirpiliyor():
+    """Groq ücretsiz katmanı dakikada 8000 token veriyor (ölçüldü).
+
+    Her adımda konuşmanın tamamı yeniden gönderiliyor ve `fetch_url` 20.000
+    karaktere kadar dönebiliyor; kırpma olmadan iki adımda bütçe doluyor,
+    429 geliyor ve tur zayıf yerel modele düşüyordu.
+    """
+    from app.agent.loop import TOOL_RESULT_TRIM_CHARS, trim_context
+
+    messages = [{"role": "system", "content": "S" * 4000},
+                {"role": "user", "content": "karşılaştır"}]
+    for index in range(6):
+        messages.append(_tool_msg(index, 12000))
+
+    trimmed = trim_context(messages)
+    before = sum(len(m["content"]) for m in messages)
+    after = sum(len(m["content"]) for m in trimmed)
+    assert after < before / 2, f"kırpma yetersiz: {before} → {after}"
+
+    eski = [m for m in trimmed if m["role"] == "tool"][:-2]
+    assert all(len(m["content"]) < TOOL_RESULT_TRIM_CHARS + 100 for m in eski)
+    assert all("kısaltıldı" in m["content"] for m in eski)
+
+
+def test_son_iki_arac_ciktisi_tam_kaliyor():
+    """Model üzerinde ÇALIŞTIĞI veriyi tam görmeli — kırpma sadece geçmişe."""
+    from app.agent.loop import trim_context
+
+    messages = [{"role": "user", "content": "x"}] + [_tool_msg(i, 9000) for i in range(4)]
+    tools = [m for m in trim_context(messages) if m["role"] == "tool"]
+    assert len(tools[-1]["content"]) > 9000
+    assert len(tools[-2]["content"]) > 9000
+    assert len(tools[-3]["content"]) < 1000
+
+
+def test_kirpma_orijinal_mesajlari_bozmuyor():
+    """Döngü kendi tam geçmişini korumalı; kırpma sadece modele giden kopyada.
+
+    Bozulsaydı bir sonraki adımda "son iki çıktı" da kırpılmış olurdu ve
+    model her adımda biraz daha körleşirdi.
+    """
+    from app.agent.loop import trim_context
+
+    messages = [_tool_msg(i, 9000) for i in range(4)]
+    trim_context(messages)
+    assert all(len(m["content"]) > 9000 for m in messages)
+
+
+def test_kirpma_kullanici_ve_asistan_mesajlarina_dokunmuyor():
+    from app.agent.loop import trim_context
+
+    messages = [
+        {"role": "user", "content": "u" * 9000},
+        {"role": "assistant", "content": "a" * 9000},
+        _tool_msg(0, 9000),
+        _tool_msg(1, 9000),
+        _tool_msg(2, 9000),
+    ]
+    trimmed = trim_context(messages)
+    assert len(trimmed[0]["content"]) == 9000
+    assert len(trimmed[1]["content"]) == 9000
+
+
+async def test_kisa_cooldownda_ayni_saglayici_bekleniyor(
+    workspace: Path, all_providers, local_enabled
+) -> None:
+    """429 "5 saniye sonra" diyorsa bekle — zayıf modele düşme.
+
+    Canlı: Groq TPM aşımında 5 saniyelik cooldown veriyordu, sistem hemen
+    zincirin sonundaki yerel modele geçiyor ve tur çöpe gidiyordu.
+    """
+    from app.agent.llm import RateLimited
+
+    llm = FakeLLM(
+        RateLimited("429", provider="groq", retry_after="1"),
+        LLMResponse(content="oldu"),
+    )
+    rec = Recorder()
+    agent = build(workspace, llm, rec)
+
+    answer = await agent.run("dene")
+
+    assert answer == "oldu"
+    switches = [e["provider"] for e in rec.of_type("model_switch")]
+    assert switches[-1] == switches[0], (
+        f"kısa cooldown'da aynı sağlayıcıya dönülmeliydi: {switches}"
+    )
+
+
+async def test_modele_giden_mesajlar_kirpilmis(workspace: Path, all_providers) -> None:
+    """Kırpma gerçekten çağrı yoluna bağlı mı? (fonksiyonun var olması yetmez)
+
+    `trim_context` doğru çalışıp `llm.complete`e bağlanmazsa hiçbir şey
+    kazanmayız ve birim testleri yine geçer — bu test o boşluğu kapatıyor.
+    """
+    big = "y" * 20000
+    (workspace / "buyuk.txt").write_text(big, encoding="utf-8")
+
+    llm = FakeLLM(
+        tool_response("read_file", "c1", path=str(workspace / "buyuk.txt")),
+        tool_response("read_file", "c2", path=str(workspace / "buyuk.txt")),
+        tool_response("read_file", "c3", path=str(workspace / "buyuk.txt")),
+        LLMResponse(content="bitti"),
+    )
+    rec = Recorder()
+    await build(workspace, llm, rec).run("dosyayı oku")
+
+    son_istek = llm.seen_messages[-1]
+    tool_mesajlari = [m for m in son_istek if m["role"] == "tool"]
+    assert len(tool_mesajlari) >= 3
+    assert "kısaltıldı" in tool_mesajlari[0]["content"], (
+        "en eski araç çıktısı modele kırpılmadan gitmiş — kırpma bağlı değil"
+    )
+    # Son çıktı dokunulmamış olmalı. (Uzunluğu `read_file`ın kendi tavanı
+    # belirliyor, kırpma değil — o yüzden işarete bakıyoruz.)
+    assert "kısaltıldı" not in tool_mesajlari[-1]["content"], "son çıktı tam gitmeli"

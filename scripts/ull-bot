@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# ULL-Bot masaüstü uygulaması.
+#
+# Servisleri (LiteLLM :4000 + FastAPI :8080) başlatır, native bir pencere
+# açar, pencere kapanınca servisleri durdurur.
+#
+# Kurulum gerekmez; doğrudan çalıştırılabilir:
+#   ./scripts/ull-bot
+#
+# Zaten çalışan servisler (örn. systemd ile) varsa onlara dokunulmaz —
+# süpervizör portu dinleyen bir şey görürse o servisi "benimser" ve
+# kapanışta durdurmaz.
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "HATA: 'uv' bulunamadı. https://docs.astral.sh/uv/ üzerinden kur." >&2
+  exit 1
+fi
+
+if [[ ! -f .env ]]; then
+  echo "UYARI: .env yok. 'cp .env.example .env' yapıp anahtarlarını gir." >&2
+fi
+
+exec uv run python -m app.desktop.launcher "$@"

@@ -67,6 +67,49 @@ class Settings(BaseSettings):
     # otomatikleşecek, o güne kadar bu manuel anahtar).
     enable_local: bool = True
 
+    # --- Faz 9: web aramasi (ISTEGE BAGLI) ---
+    # Hicbiri doldurulmazsa arama DuckDuckGo kazimasiyla yapilir: ucretsiz ama
+    # motorlar sik istekte captcha/"anomaly" sayfasi donduruyor ve arastirma
+    # yarida kesiliyor. Asagidakiler sirayla denenir, ilk sonuc veren kazanir.
+    #
+    # 1) Kendi makinende calisan SearXNG (meta-arama). Kota yok, anahtar yok,
+    #    sorgu ucuncu tarafa gitmiyor. `settings.yml`de `search.formats`
+    #    icine `json` eklenmis olmali. Ornek: http://127.0.0.1:8888
+    searxng_url: str = ""
+    # 2) Tavily: ayda 1000 kredi, her ay yenileniyor, kart istemiyor.
+    #    https://app.tavily.com/  — anahtar `tvly-` ile baslar.
+    tavily_api_key: str = ""
+    # 3) Brave: ayda 2000 sorgu ama kayitta kredi karti isteyebiliyor.
+    #    https://api-dashboard.search.brave.com/
+    brave_api_key: str = ""
+
+    # --- Faz 8: mail (IMAP) ---
+    # Arka plan senkronu; 0 ise otomatik senkron kapalı (sadece elle "yenile").
+    mail_sync_interval_seconds: int = 300
+    # Bir senkronda klasör başına en fazla kaç YENİ mesaj çekilir.
+    mail_sync_limit: int = 200
+    # Gövde bu boyutu aşarsa kırpılarak saklanır (önbellek şişmesin).
+    mail_body_limit: int = 200_000
+    # Yeni mail geldiğinde kural tabanlı sınıflandırıcı otomatik çalışsın mı?
+    mail_auto_categorize: bool = True
+
+    # --- Faz 8: takvim ve bildirim ---
+    # Hatırlatıcı döngüsünün kontrol aralığı. Bildirimin gecikme payı bu kadar.
+    calendar_poll_seconds: int = 30
+    # Masaüstü bildirimleri (dunst/libnotify) açık mı?
+    notifications_enabled: bool = True
+    # Varsayılan hatırlatma: etkinlikten kaç dakika önce.
+    default_reminder_minutes: int = 10
+
+    # --- Faz 8: masaüstü uygulaması ---
+    # Süpervizörün başlatacağı portlar. `litellm_base_url` ile tutarlı olmalı.
+    api_port: int = 8080
+    litellm_port: int = 4000
+    # Servisler bu süre içinde ayağa kalkmazsa uygulama hata gösterir.
+    service_startup_timeout: int = 90
+    window_width: int = 1360
+    window_height: int = 880
+
     @property
     def data_dir(self) -> Path:
         data_dir = Path(user_data_dir("ai-orchestrator", roaming=False))

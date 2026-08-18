@@ -165,12 +165,26 @@ def test_local_has_no_quota_ceiling(workspace: Path, all_providers, local_enable
     assert selection.provider == "ollama"
 
 
-def test_local_is_last_resort_for_tool_use(workspace: Path, all_providers, local_enabled) -> None:
-    """spec §5.1 tablosu: tool_use zincirinde local en sonda."""
+def test_local_arastirma_turunu_yurutmuyor(workspace: Path, all_providers, local_enabled) -> None:
+    """`tool_use` zinciri yerel modele DÜŞMEMELİ (2026-08-18 kararı).
+
+    Önce araya `gemini` eklendi, sonra `ollama` bu zincirden tamamen
+    çıkarıldı. Sebep canlı gözlem: kotalar bitip tur qwen2.5:3b'ye kalınca
+    model ya aynı sorguyu tekrarlayıp kilitleniyor ya da cevabı uyduruyor —
+    son denemede YouTube linklerini `watch?v=example_video_id` diye icat
+    etti. Uydurulmuş cevap, dürüst bir hatadan kötüdür.
+
+    `ollama` `trivial` zincirinde duruyor: internet kesikken sohbet çalışsın.
+    """
     set_cooldown("groq", 120, note="429")
     set_cooldown("openrouter", 120, note="429")
-    selection = choose(task_type="tool_use")
-    assert selection.provider == "ollama"
+    assert choose(task_type="tool_use").provider == "gemini"
+
+    providers = {c.provider for c in get_routing_config().chain("desktop", "tool_use")}
+    assert "ollama" not in providers, "araştırma zincirinde yerel model olmamalı"
+    assert "ollama" in {
+        c.provider for c in get_routing_config().chain("desktop", "trivial")
+    }, "trivial zincirinde kalmalı — internetsiz sohbet"
 
 
 def test_laptop_profile_never_offers_local(workspace: Path, all_providers, local_enabled) -> None:

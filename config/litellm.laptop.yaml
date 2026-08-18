@@ -7,7 +7,7 @@ model_list:
   # sağlayıcı/model/API anahtarı.
   - model_name: chat-groq
     litellm_params:
-      model: groq/llama-3.3-70b-versatile
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
 
   - model_name: chat-openrouter

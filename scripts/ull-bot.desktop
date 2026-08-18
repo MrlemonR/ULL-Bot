@@ -1,0 +1,14 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Type=Application
+Name=ULL-Bot
+GenericName=Kişisel AI Asistanı
+Comment=Sohbet, mail ve takvim — servisleri kendisi başlatıp durduran masaüstü uygulaması
+# install.sh bu satırdaki yolu gerçek proje dizinine göre yeniden yazar.
+Exec=/home/mrlemon/Projects/ULL-Bot/scripts/ull-bot
+Icon=mail-message-new
+Terminal=false
+Categories=Utility;Office;Network;
+Keywords=ai;asistan;mail;takvim;chat;
+StartupNotify=true
+StartupWMClass=ULL-Bot

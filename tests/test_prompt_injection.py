@@ -119,3 +119,16 @@ async def test_untrusted_wrapper_is_not_applied_to_our_own_errors() -> None:
     text = wrap_tool_result("run_shell", "REDDEDİLDİ", untrusted=False)
     assert "<tool_result" not in text
     assert json.dumps(text)  # düz metin, sarmalanmamış
+
+
+def test_prompt_adim_butcesi_ve_toplu_cagri_soyluyor(workspace: Path) -> None:
+    """Canlı bir karşılaştırma turu 21 adım sürdü (15'i `web_search`).
+
+    Döngü, bir mesajdaki TÜM araç çağrılarını tek adımda çalıştırıyor —
+    yani toplu çağrı kotayı doğrudan düşürüyor. Prompt bunu söylemezse
+    model tek tek çağırıyor.
+    """
+    prompt = system_prompt(str(workspace))
+    assert "Step budget" in prompt
+    assert "parallel" in prompt and "ONE message" in prompt
+    assert "10 steps or" in prompt

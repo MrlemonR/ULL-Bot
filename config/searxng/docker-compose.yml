@@ -1,0 +1,33 @@
+# SearXNG — ULL-Bot'un yerel arama sağlayıcısı.
+#
+# Ayrı bir compose dosyası, çünkü SearXNG uygulamanın YAŞAM DÖNGÜSÜNDEN
+# BAĞIMSIZ: süpervizör bunu başlatmıyor/durdurmuyor. Arka planda durur,
+# uygulama açıldığında hazır bulunur.
+#
+#   docker compose -f config/searxng/docker-compose.yml up -d
+#
+# Kurulum ve doğrulama: docs/SEARXNG.md
+
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: ull-bot-searxng
+    ports:
+      # host 8888 → konteyner 8080.
+      #
+      # Sağdaki 8080 SABİT: imajın içindeki uygulama sunucusu (granian/uwsgi)
+      # her zaman 8080'i dinliyor ve `settings.yml`deki `server.port` bunu
+      # DEĞİŞTİRMİYOR — o değer yalnızca SearXNG'nin ürettiği bağlantılarda
+      # kullanılıyor. Sağa 8888 yazarsan host portu açılır ama arkasında
+      # dinleyen olmadığı için her istek sıfırlanır (curl'de "HTTP 000").
+      #
+      # Soldaki loopback kısıtı önemli: "8888:8080" yazarsan SearXNG tüm ağa
+      # açılır ve herkesin kullanabileceği bir arama proxy'sine dönüşür.
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+    # Uygulama kapansa da makine açık kaldığı sürece ayakta kalsın; ajan
+    # arama yapacağı anda beklemek zorunda olmasın.
+    restart: unless-stopped

@@ -1,189 +1,299 @@
-# Devir notu — spec'in numaralı fazları bitti, sırada UI var
+# Devir notu — yeni konuşma buradan başlasın
 
-Bu dosya yeni bir konuşmanın (ve muhtemelen yeni bir modelin) sıfırdan
-başlarken ihtiyacı olan her şeyi tutar. Son güncelleme: **2026-08-16**,
-Faz 7 (backend kısmı) bittikten hemen sonra.
+Son güncelleme: **2026-08-17**, Faz 9 sonunda.
 
-**Eğer bu konuşma UI kurmak için başladıysa** (kullanıcı Opus 5 ile ayrı bir
-konuşmada yapacağını söylemişti): bu dosyayı değil, doğrudan
-**[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)**'i oku — WebSocket protokolü ve REST
-uçlarının tam referansı orada. Bu dosya (`NEXT_PHASE.md`) backend'in
-sıradaki adımları için.
+**Bu dosyayı okuduysan kodu baştan taramana gerek yok.** Aşağıda ne
+çalıştığı, neyin neden öyle olduğu ve sıradaki işler yazılı.
 
-Okuma sırası (backend'e devam edecekse):
+Okuma sırası:
 
-1. **Bu dosya** (durum + kurallar + sıradaki iş)
-2. **[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)** — API yüzeyinin tam referansı,
-   backend'e dokunacaksan da faydalı (hangi olay/uç neyi bekliyor).
-3. `DECISIONS.md` — "neden böyle yapılmış" arşivi. Faz 7'den kalanlar:
-   "`remember` aracı: yaz var, ayrı bir recall aracı yok", "Arama: `LIKE`,
-   FTS5 değil", "systemd target'ın `Wants=`'ı gerekiyordu", "`install.sh`
-   hiçbir şeyi enable/start etmiyor".
-4. `README.md` — kurulum, çalıştırma, güvenlik modeli, router, local model,
-   profiller, hafıza/geçmiş/kullanım, deployment.
+1. **Bu dosya** — durum, kurallar, sıradaki iş, açık sorular.
+2. **[`FAZ9_TESLIM.md`](./FAZ9_TESLIM.md)** — web araştırma, spam, mail
+   render'ı: en son eklenenlerin referansı.
+3. **[`FAZ8_TESLIM.md`](./FAZ8_TESLIM.md)** — masaüstü uygulaması, mail,
+   takvim API'si ve UI yapısı.
+4. **[`FAZ7_TESLIM.md`](./FAZ7_TESLIM.md)** — WebSocket sohbet protokolü.
+   **Değişmedi**, hâlâ bağlayıcı.
+5. `DECISIONS.md` — "neden böyle" arşivi. Aşağıdaki her karar orada
+   gerekçesiyle var; bir şeyi değiştirmeden önce ilgili başlığı oku.
 
 ---
 
-## 1. Sistem şu an ne durumda
+## 1. Tek cümlede: sistem ne
 
-**Spec'in Faz 1-7'sinin hepsi bitti — UI HARİÇ.** Kullanıcının kararı: UI'ı
-ayrı bir konuşmada, Opus 5 ile yapacak; bu fazda "UI hariç her şeyi yap"
-istendi. 277 test geçiyor (`uv run pytest`). Henüz **hiç git commit
-atılmadı** — kullanıcı istemedi.
+Kendi makinesinde çalışan, ücretsiz LLM kotalarını yöneten kişisel bir
+asistan. Native bir masaüstü penceresi (`./scripts/ull-bot`) açılıyor,
+servisleri kendisi başlatıp kapatıyor; içinde **sohbet**, **IMAP mail**,
+**takvim**, **kota paneli** ve **geçmiş** var. Ajan; dosyalara, kabuğa,
+maile, takvime ve **internete** erişebiliyor.
+
+## 2. Durum
+
+**511 test geçiyor** (`uv run pytest`). **Git'te son commit `Phase7` —
+Faz 8 ve 9'un tamamı henüz commit EDİLMEDİ** (kullanıcı istemedi).
 
 | Faz | Ne var |
 |---|---|
-| 1 | LiteLLM proxy (:4000) + FastAPI (:8080) + SQLite + streaming sohbet |
-| 2 | Araçlar, güvenlik politikası, sandbox, onay diyalogları, dry-run, audit log |
-| 3 | Üç sağlayıcı, kota takibi, 429 → cooldown → sessiz sağlayıcı devri, kota paneli |
-| 4 | Kural tabanlı router: `classifier.py` + `routing.yaml` görev tipi blokları + `gemini_lite` |
-| 5 | Local model: Ollama (`chat-local`), `ENABLE_LOCAL`, `trivial`/`tool_use` zincirlerinde |
-| 6 | `PROFILE=desktop\|laptop`, `config/litellm.laptop.yaml`, laptop'ta local statik dışlı |
-| 7 | Kalıcı hafıza (`remember`), oturum geçmişi+arama, kullanım grafiği verisi, systemd `--user`, `install.sh` — **UI hariç** |
+| 1-7 | Spec'in fazları: LiteLLM+FastAPI, araçlar+güvenlik, çoklu sağlayıcı+kota, router, local model, profiller, hafıza/geçmiş/systemd |
+| 8 | **Masaüstü uygulaması** (`app/desktop/`), **IMAP mail** (`app/mail/`), **takvim** (`app/calendar/`), **bildirimler** (`app/notify/`), **UI** (`web/`) |
+| 8b | Google OAuth eklendi, denendi, **kaldırıldı** (aşağıda) |
+| 8c | HTML mail render'ı, spam sürgünü, kaydırma düzeltmesi |
+| 9 | **Web araştırma** (`app/web/`), markdown tablo, kısır döngü koruması |
+| 9b | SearXNG+Tavily arama zinciri, `youtube_search`, turu toparlama, sohbet sıralaması |
 
-`web/index.html` hâlâ Faz 1'den kalma minimal bir sayfa — kullanıcı yeni
-UI'ın "web arayüzü olmadan bir uygulama olarak çalışması" gerektiğini
-söyledi, yani muhtemelen bu tamamen değişecek/yerini başka bir şeye
-bırakacak. Backend tarafı bundan bağımsız, `FAZ7_TESLIM.md`deki protokolle
-konuşulduğu sürece UI'ın tarayıcı mı native bir uygulama mı olduğu
-backend'i ilgilendirmiyor.
-
-### Servisleri başlatma
+### Çalıştırma
 
 ```bash
 cd /home/mrlemon/Projects/ULL-Bot
-uv run litellm --config config/litellm.desktop.yaml --port 4000   # 1. terminal
-uv run uvicorn app.main:app --port 8080                           # 2. terminal
+./scripts/ull-bot          # native pencere; servisleri kendisi açıp kapatır
 ```
 
-**Ya da Faz 7'den beri systemd `--user` ile:**
+Alternatifler: `systemctl --user start ull-bot.target` (Faz 7, servisler
+arka planda kalır) ya da `uv run python -m app.desktop.supervisor`
+(pencere yok, hata ayıklama). **Üçü çakışmaz** — süpervizör dinlenen bir
+portu görürse o servisi benimser ve kapanışta ona dokunmaz.
 
-```bash
-./scripts/install.sh                        # bir kere, .env + birimleri kurar
-systemctl --user enable --now ull-bot.target
-```
+Süpervizör logları: `~/.local/share/ai-orchestrator/logs/`.
 
-Bu konuşmanın sonunda servisler **systemd üzerinden `active (running)`**
-bırakıldı (`start` edildi, `enable` EDİLMEDİ — yani şu an çalışıyorlar ama
-oturum açılışında otomatik başlamayacaklar; kalıcı otomatik başlatma
-kullanıcının kararı). Durum: `systemctl --user status ull-bot.target`.
+### Şu anki veri (gerçek, kullanıcının kendi hesabı)
 
-Ayakta mı: `curl localhost:8080/api/config`, `curl localhost:4000/health/readiness`,
-`curl localhost:11434/api/tags` (Ollama, ayrı bir sistem servisi, bununla
-ilgisi yok). Kod değiştirince (`--reload` yok): manuel çalıştırıyorsan
-uvicorn'u yeniden başlat; systemd ile çalışıyorsa `systemctl --user restart
-ull-bot-api.service` (litellm config değiştiyse `ull-bot-litellm.service`i
-de). Config dosyaları (`quotas.yaml`, `routing.yaml`, `litellm.*.yaml`)
-açılışta okunuyor.
+- `reallimon46@gmail.com` bağlı (uygulama parolasıyla, IMAP)
+- 212 mail: 204 `INBOX` + 8 `[Gmail]/Spam`
+- 41 sohbet oturumu, 0 takvim etkinliği
 
-Tarayıcı açmadan sohbeti sürmek için: `/tmp/claude-1000/.../scratchpad/ws_chat.py`
-(yoksa `FAZ7_TESLIM.md`deki protokolle 20 satırlık bir `websockets`
-istemcisi yaz).
+## 3. Sıradaki işler
 
----
+### a) Web araması — kod tarafı bitti, KULLANICI EYLEMİ bekliyor
 
-## 2. Sıradaki iş — spec'te numaralı bir faz DEĞİL
+`web_search` DuckDuckGo kazımasıyla çalışıyordu ve **DDG bu makinenin IP'sini
+engelledi** (HTTP 202 + "anomaly"). Mojeek captcha, Brave HTML 429 döndürdü.
 
-Spec'in 7 fazı bitti. Kullanıcıyla bu konuşmada geçen, henüz ele alınmamış
-iki gerçek konu:
+**Brave elendi: kullanıcının kredi kartı kayıtta reddedildi.** Google Custom
+Search de elendi — Google 2025'te yeni müşteriye kapattı, 1 Ocak 2027'de
+tamamen kapanıyor. Kullanıcı yerine **SearXNG + Tavily** ikilisini seçti.
 
-### a) UI (kullanıcı bunu ayrı yapacak)
+`app/web/search.py` artık dört yolu sırayla deniyor, ilk sonuç veren kazanır:
 
-Bkz. `FAZ7_TESLIM.md`. Bu konuşmanın kapsamı değildi, bilerek dışarıda
-bırakıldı.
+| Sıra | Yol | Ayar | Durum |
+|---|---|---|---|
+| 1 | SearXNG (yerel meta-arama) | `SEARXNG_URL` | **çalışıyor, canlı doğrulandı** |
+| 2 | Tavily (ayda 1000 kredi, kartsız) | `TAVILY_API_KEY` | **çalışıyor, canlı doğrulandı** |
+| 3 | Brave | `BRAVE_API_KEY` | kod duruyor, kullanılmıyor (kart reddedildi) |
+| 4 | DDG kazıma | — | bu IP'de engelli, son çare |
 
-### b) Çöp kutusu / `write_file` / `edit_file` / `delete_file`
+**Arama çalışıyor ve bu iş KAPANDI** — ikisi de canlı doğrulandı. Kurulumda
+iki tuzağa düşüldü, ikisi de `docs/SEARXNG.md`'de yazılı: (1) çekirdek
+güncellemesinden sonra reboot edilmeden docker açılmıyor, (2) konteyner
+İÇERİDE her zaman 8080 dinliyor — eşleme `127.0.0.1:8888:8080` olmalı,
+`settings.yml`deki `port` bunu değiştirmiyor.
 
-Kullanıcı bunu **bu faz bittikten sonra** ele almak istediğini söyledi
-(spec'te de zaten hiçbir numaralı faza atanmamıştı — bkz. Faz 6 devir
-notundaki "asıl soru" bölümü, DECISIONS.md). Şu an gerçek yazma/silme
-SADECE onaylanan `run_shell` komutlarıyla oluyor, geri alma yok. Bu
-konuşulmadan "unutulmuş" sanıp otomatik eklenmemeli — kapsamını (hangi
-araçlar, çöp kutusu 30 gün mü tutuyor spec'in dediği gibi, silme onayı nasıl
-görünüyor) kullanıcı belirlemeli.
+SearXNG kapansa bile arama ölmüyor: zincir 1.7 sn'de Tavily'ye düşüyor.
 
----
+**Kullanıcıya sorulmadan bir arama sağlayıcısı eklenmemeli.**
 
-## 3. Bozulmaması gereken kurallar
+### a2) Ücretsiz kotalar araştırma turuna yetmiyor — SIRADAKİ İŞ
 
-1. **Model isimlerini ve kota sayılarını uydurma** (spec §12). Canlı çağırıp
-   dene.
+Arama ve ajan tarafı artık çalışıyor ama uzun araştırma turları kotayı
+bitiriyor. Ölçülen sınırlar:
+
+- **Groq: dakikada 8000 token** (`x-ratelimit-limit-tokens`). `gpt-oss-120b`
+  ve `gpt-oss-20b` için AYNI — model değiştirmek çözmez, ölçüldü.
+- OpenRouter: günde 50 istek (kredisiz hesap); canlı %4-9'a kadar indi.
+- Gemini: yerel sayaç %0 gösteriyordu.
+
+Her adımda tüm konuşma yeniden gönderiliyor ve `fetch_url` çıktıları
+20.000 karaktere kadar çıkabiliyor; 4-5 adımlık bir araştırma Groq'un
+dakikalık bütçesini tek başına yiyor. Sonuç: tur, zincirin sonundaki
+`ollama`ya (qwen2.5:3b) düşüyor ve o araştırmayı bitiremiyor.
+
+**Yapıldı (2026-08-18), kullanıcı "ücretsiz kalsın, en iyisini yap" dedi:**
+
+1. **Bağlam kırpma** (`AgentLoop.trim_context`): eski araç çıktıları 700
+   karaktere iniyor, son ikisi tam kalıyor. Ölçüm: 6 çıktılı bir turda
+   76.000 → 31.000 karakter (**%60 azalma**, ~19.000 → ~7.800 token).
+2. **Kısa cooldown'da bekleme**: 429 sonrası sağlayıcı ≤12 sn içinde geri
+   geliyorsa bekleniyor (Groq TPM aşımında genelde 5 sn). Sağlayıcı başına
+   bir kez.
+3. **`ollama` `tool_use` zincirinden çıkarıldı** — gerekçe aşağıda.
+
+Canlı etki: tur, kotalar bitmeden önce 2 adım yerine **6 adım** bulut
+sağlayıcılarında ilerliyor. Kotalar tamamen bittiğinde ise artık
+"sağlayıcı yok, kotalar dolmuş, şu zaman tekrar dene" hatası veriyor.
+
+**Kalan gerçek sınır:** ücretsiz katmanlar bu iş için dar. Groq dakikada
+8000 token, OpenRouter günde 50 istek, Gemini günlük kota. Uzun bir
+araştırma turu bunları bir öğleden sonrada bitirebiliyor. Kullanıcı ücretli
+sağlayıcı istemiyor — bu yüzden kotalar bittiğinde beklemek gerekiyor.
+
+### a3) Adım sayısı — kısmen ölçüldü, tamamlanmayı bekliyor
+
+Canlı bir karşılaştırma turu **21 adım** sürdü (15'i `web_search`, 3
+`youtube_search`, 2 `fetch_url`) ve günün kotasını bitirdi. Kullanıcı hedefi:
+~10 adım.
+
+Kaldıraç şu: `AgentLoop` bir mesajdaki **tüm** araç çağrılarını TEK adımda
+çalıştırıyor (`for call in response.tool_calls`). Yani toplu çağrı kotayı
+doğrudan düşürüyor. Prompt'a "Step budget" bölümü eklendi (paralel çağrı,
+tek geniş arama, fiyatı doğrulamak için tekrar arama yok) ve
+`youtube_search` açıklamasına da yazıldı.
+
+**Canlı kanıt:** sonraki turda model adım 4'te üç `web_search`i aynı anda
+gönderdi ve üçü tek adım saydı. Ama o tur kotalar bittiği için yarıda kaldı
+— **tam bir turun kaç adıma indiği henüz ölçülmedi.** Kotalar yenilendiğinde
+ilk iş bunu ölçmek; hâlâ 15+ ise sıradaki adım `web_search` sonuçlarını
+zenginleştirip `fetch_url` ihtiyacını azaltmak olabilir.
+
+### b) `@trendbox.io` hesabı eklenemiyor
+
+Google Workspace hesabı; yöneticisi uygulama parolalarını ve muhtemelen
+IMAP'i kapatmış ("Aradığınız ayar hesabınızda kullanılamıyor"). MX kaydı
+doğrulandı, gerçekten Google Workspace. Kullanıcıya söylenenler:
+
+1. Önce 2 adımlı doğrulamayı dene (kapalıysa uygulama parolası hiç çıkmaz)
+2. Kapalıysa yöneticiden: Güvenlik → 2SV'ye izin, **ve** Gmail → Son
+   kullanıcı erişimi → IMAP
+3. Yönetici beklemeden: trendbox.io → gmail'e **otomatik yönlendirme**
+
+Bu ikisi açılmadan hiçbir istemci bağlanamaz. Kullanıcı sonucu bildirmedi.
+
+### c) Çöp kutusu / `write_file` / `edit_file` / `delete_file`
+
+**Faz 7'den beri bekliyor**, hiçbir faza atanmadı. Şu an gerçek yazma/silme
+sadece onaylanan `run_shell` ile oluyor, geri alma yok. `settings.trash_dir`
+tanımlı ama kullanılmıyor. **Kullanıcı kapsamı belirlemeli** — otomatik
+eklenmemeli.
+
+### d) Telefona bildirim
+
+Kullanıcı bilerek sonraya bıraktı. Hatırlatmalar şu an sadece masaüstü
+bildirimi (dunst). Yol seçilmedi (ntfy, Gotify, Telegram…).
+
+### e) Faz 7'den devralınan bilinen boşluk
+
+`GET /api/quota`, `gemini_lite` ve `ollama`yı göstermiyor —
+`describe_chain()` `task_type` verilmeden çağrılıyor.
+
+## 4. Cevaplanmış soru (eski "teşhis edilemedi" maddesi)
+
+Sağ kenardaki dar dikey şerit **çözüldü**. Kullanıcı tarif etti: dock
+daraltılınca kalem düğmesi kalıyor, daraltma düğmesi sağa kayıyor.
+
+Ölçüm (headless Chromium, CDP): daraltılmış kolon 46px, ama `[data-new]`
+(✎) gizlenmiyordu. İki düğme + boşluk + padding 76px eder; başlığın
+`scrollWidth`i 52px (client 45px) ve daraltma düğmesinin sağ kenarı
+pencerenin **7px dışında** kalıyordu. Önceki ölçüm bunu bulamamıştı çünkü
+sadece dikey kaydırma zinciri ölçülmüştü, dock BAŞLIĞI değil.
+
+`style.css`te `[data-new]` de gizlenenler listesine eklendi; ölçüm
+tekrarlandı (45 = 45, düğme pencere içinde). `tests/test_web_assets.py`
+kuralı koruyor.
+
+## 5. Bozulmaması gereken kurallar
+
+Faz 1-7'den:
+
+1. **Model isimlerini ve kota sayılarını uydurma** (spec §12). Canlı dene.
 2. **Güvenlik katmanını kısayol geçme.** Shell erişimi var.
-3. **Blocked komut listesi kullanıcı/UI tarafından düzenlenemez** (spec §7.3).
-4. **Audit log ajana asla okunabilir/yazılabilir olmamalı.** 0600.
+3. **Blocked komut listesi UI'dan düzenlenemez** (spec §7.3).
+4. **Audit log ajana okunabilir/yazılabilir olmamalı.** 0600.
 5. **LiteLLM'in kendi fallback'i kapalı kalmalı** (`num_retries: 0`).
 6. **`fastapi==0.136.3` pini** — kaldırma.
 7. **Commit/push sadece kullanıcı açıkça isterse.**
-8. **`force_first`, kullanıcının elle kapattığı sağlayıcıyı zorlamaz.**
-9. **Görev tipi seçimi kota/cooldown elemesinin üstüne değil altına eklenir.**
-10. **`gemini_lite`/`ollama` gerçek birer sağlayıcı değil.**
-11. **Laptop'ta local dışlaması statik (`routing.yaml`), bir bayrak değil.**
-12. **`litellm.desktop.yaml` ve `litellm.laptop.yaml` aynı modelleri
-    tanımlamalı** (`tests/test_config_files.py` bunu test ediyor).
-13. **`remember`in ayrı bir "recall" aracı yok — notlar sistem promptuna
-    gömülü** (`app/agent/prompts.py` → `_memory_section()`). UI ya da yeni
-    bir araç eklerken bunu iki kere yapma (hem prompt'a göm hem ayrı bir
-    "hafızayı oku" tool'u ekleme — model zaten görüyor).
-14. **`install.sh` servisleri enable/start etmiyor, kasıtlı** (yukarıda
-    "Servisleri başlatma"). UI kurulum akışına bunu otomatikleştiren bir
-    adım eklerken kullanıcıya sor, sessizce yapma.
+8. **`force_first`, elle kapatılan sağlayıcıyı zorlamaz.**
+9. **Görev tipi seçimi kota elemesinin ALTINA eklenir.**
+10. **`gemini_lite`/`ollama` gerçek sağlayıcı değil.**
+11. **Laptop'ta local dışlaması statik**, bayrak değil.
+12. **`litellm.desktop.yaml` ve `litellm.laptop.yaml` aynı modelleri tanımlar.**
+13. **`remember`in ayrı "recall" aracı yok** — notlar sistem promptunda.
+14. **`install.sh` servisleri enable/start etmiyor**, kasıtlı.
 
-## 4. Bilinçli olarak YAPILMAYANLAR
+Faz 8-9'dan:
 
-- **Çöp kutusu / write tool'ları** → yukarıda "sıradaki iş b" — kullanıcı
-  bilerek bu fazdan sonraya bıraktı.
-- **UI** → kullanıcı bilerek bu fazdan çıkardı, Opus 5 ile ayrı yapacak.
-- **Ajanı ayrı bir sistem kullanıcısı altında çalıştırma** → hiçbir fazda
-  yok, systemd `--user` birimi (Faz 7) bunun YERİNE geçmiyor.
-- **Windows kabuk politikası** → `run_shell` Windows'ta bilerek kapalı.
-- **Görsel ek desteği** → `classifier.py`nin `has_image`i hep `False`,
-  WS mesaj şemasında görsel alanı yok.
-- **Sınıflandırıcının LLM'e (local dahil) taşınması** → Faz 5'te bilinçli
-  ertelendi.
-- **LAN üzerinden masaüstü Ollama'sı** → kod hazır, açık değil, test edilmedi.
-- **`/api/quota`nın tüm sağlayıcıları (gemini_lite, ollama dahil) göstermesi**
-  → bilinen boşluk, Faz 4'ten beri var, kimse kapatmadı (aşağısı).
-- **Tam metin arama (FTS5)** → `LIKE` yeterli görüldü (bkz. DECISIONS.md).
+15. **Mail VE web içeriği düşman girdidir.** `read_mail`, `list_mail`,
+    `web_search`, `fetch_url` çıktıları her zaman `untrusted=True`.
+16. **IMAP parolası SQLite'a yazılmaz** — libsecret, yoksa 0600 dosya.
+17. **Mail yazma önce IMAP'e, sonra önbelleğe.**
+18. **Süpervizör benimsediği servisi öldürmez.**
+19. **Takvimde güven 1.0 sadece ICS yolunun rozeti** (metin tahmini ≤0.95).
+20. **Kural tabanlı sınıflandırıcı önce, LLM sadece kararsızlara ve elle.**
+21. **`FAZ7_TESLIM.md`deki WebSocket protokolü sabit.**
+22. **`fetch_url`ün SSRF kapısı kaldırılamaz** — adresi model seçiyor ve
+    model okuduğu sayfadan etkileniyor.
+23. **Spam sürgündür, filtre değil** — "Tümü"ye, "Okunmamış"a ve aramaya
+    hiç karışmaz. Sunucunun kararı bizim kurallarımızın önünde.
+24. **Yükseklik zincirindeki her grid/flex öğesinde `min-height: 0`**
+    olmalı (`tests/test_web_assets.py` kontrol ediyor).
+25. **Mail gövdesi beyaz zeminde, kum havuzunda, `allow-scripts` OLMADAN.**
 
-## 5. Bilinen, düzeltilmemiş gerçekler
+## 6. Bilinçli olarak YAPILMAYANLAR
 
+- **Google OAuth** → eklendi, denendi, **kaldırıldı**. `mail.google.com`
+  kısıtlı kapsam olduğu için Google, doğrulanmamış uygulamaların
+  yetkilendirmelerini **7 günde bir iptal ediyor**; haftada bir kopan bir
+  mail istemcisi hiç OAuth'tan kötü. Detay: DECISIONS.md → "Google OAuth,
+  kişisel Gmail için pratik değil". `mail_accounts.auth_type` sütunu duruyor
+  ama hep `'password'`.
+- **Mail gönderme/cevaplama** → sadece okuma, işaretleme, taşıma.
+- **Tekrarlayan etkinlik (RRULE)** → ICS'te varsa ilk oluşum alınıyor.
+- **Takvimin telefona senkronu** → kullanıcının kararı; dışa aktarım ICS.
+- **Görsel ek desteği** → `classifier.has_image` hep `False`.
+- **Sınıflandırıcının LLM'e taşınması** → Faz 5'te ertelendi.
+- **LAN üzerinden Ollama** → kod hazır, açık değil, test edilmedi.
+- **Ajanı ayrı sistem kullanıcısı altında çalıştırma** → hiçbir fazda yok.
+- **Windows kabuk politikası** → `run_shell` Windows'ta kapalı.
+
+## 7. Bilinen, düzeltilmemiş gerçekler
+
+Sağlayıcı tarafı (bizim kodumuz değil):
+
+- **OpenRouter'ın ücretsiz modeli ara sıra boş cevap ya da "Provider
+  returned error" döndürüyor.** Canlı görüldü: `fetch_url` başarılı,
+  ardından model hiç metin üretmedi ve tur `done` ile boş bitti.
 - **Groq ara sıra `tool_use_failed` döndürüyor.**
-- **LiteLLM, Groq'un `x-ratelimit-*` header'larını istemciye geçirmiyor.**
-- **OpenRouter'ın ücretsiz modelleri sık 429/502 veriyor.**
-- **Gemini'nin tool-call ID'leri devasa.**
-- **`classifier.py`'nin "fiil içeriyor mu" kontrolü tam değil.**
-- **`chat-local`in ilk isteği yavaş** (~2-5 sn model yükleme).
-- **`GET /api/quota` `gemini_lite`/`ollama`yı hiç göstermiyor** —
-  `describe_chain()` task_type'sız (yani `default`) çağrılıyor.
-- **LAN üzerinden Ollama erişimi test edilmedi.**
-- **Bir sağlayıcı yayına başlayıp (bazı `token` olayları gönderip) sonra
-  aynı adımda başarısız olabiliyor** (canlı gözlendi: groq metne başladı,
-  `tool_use_failed`e benzer bir hatayla düştü, ollama sıfırdan yeni bir
-  cevap üretti). Sunucu tarafında zararsız (yarım içerik hiçbir yere
-  yazılmıyor) ama İSTEMCİ o token'ları zaten almış oluyor —
-  `FAZ7_TESLIM.md` §4 madde 7'de UI için nasıl ele alınacağı yazılı
-  (aynı adımda gelen bir `model_switch`, token arabelleğini sıfırlama
-  sinyali sayılmalı).
+- **Bir sağlayıcı yayına başlayıp aynı adımda düşebiliyor** — UI bunu
+  `model_switch`i "arabelleği sıfırla" sinyali sayarak çözüyor.
+- **Yerel model (qwen2.5:3b) çok adımlı araştırmada zayıf** — boş/bozuk
+  araç argümanları üretebiliyor. Kısır döngü koruması bunu yakalıyor.
 
-## 6. Son kabul testi nasıl göründü
+Bizim tarafımız:
 
-Faz 7'nin backend kısmı canlı doğrulandı:
+- **DDG bu IP'yi engelledi** (yukarıda 3a).
+- **HTML mailler kaba metne indirgeniyor** (`parser.html_to_text` regex).
+- **Doğal dil tarih çıkarımı kural tabanlı** — kapsamı
+  `tests/test_calendar_meeting.py`de sabitlendi.
+- **`move_mail` gerçek sunucuda denenmedi.**
+- **IMAP klasör adı çözümü (modified UTF-7) sahada test edilmedi.**
+- **Pencere Wayland'de `WEBKIT_DISABLE_DMABUF_RENDERER=1` ile açılıyor**
+  (yazılım render yolu).
 
-```
-remember aracı: "adımı Limon olarak hatırla" → qwen2.5:3b-instruct (local)
-  remember(key="username", value="Limon") çağırdı → kaydedildi
-  YENİ bir oturumda "adım ne?" → openrouter → "Adın Limon." (hafıza kalıcı)
+## 8. Bu oturumda yakalanan hatalar — tekrar etmesin
 
-GET /api/sessions, /api/sessions/{id}/messages, /api/search?q=Limon,
-GET /api/usage/graph, GET /api/memory, DELETE /api/memory/{key}
-  hepsi gerçek veriyle denendi, doğru döndüler
+Hepsi canlı kullanımda ya da testte çıktı, hepsi teste bağlandı:
 
-systemd: ./scripts/install.sh çalıştırıldı, birimler ~/.config/systemd/user/e
-  yazıldı, systemd-analyze --user verify hatasız, `start ull-bot.target`
-  ikisini de `active (running)` yaptı, gerçek bir chat isteği cevap verdi
-```
+| Hata | Belirti | Kök sebep |
+|---|---|---|
+| `hidden` niteliği ezilmişti | Tüm arayüz sönük, hiçbir şeye tıklanmıyor | `.modal-backdrop { display: grid }` UA stylesheet'i eziyordu |
+| `.stage`de `min-height: 0` yok | Mail paneli kaymıyor | Grid öğesi içeriğinin altına küçülmüyor, panel 25.000px oldu |
+| Mail koyu-üstü-koyu | Metin okunmuyor | Gönderen beyaz zemin varsayıyor |
+| Yalnızca `INBOX` senkronu | Spam algılanmıyor | Gmail'in spam kutusu hiç çekilmiyordu |
+| Markdown yer tutucusu | Kod blokları "BLOCK0" yazıyor | ` BLOCK0 ` boşluğa bağlıydı, `trim()` bozuyordu |
+| Kısır döngü | Ajan dakikalarca dönüyor | Reddedilen çağrı turu durdurmuyordu |
+| DDG 202 | "sonuç yok" sanılıyor | 202 hata kodu değil, hız sınırı sayfası |
+| VALARM | Etkinlik açıklaması yanlış | ICS iç bileşenleri atlanmıyordu |
+| Türkçe saat kaybı | Etkinlik 09:00'a düşüyor | "20.08.2026 **tarihinde saat** 14:00" köprüsü kalıpta yoktu |
+| Groq modeli kaldırılmış | Her turda `provider_error` 404, tur zayıf modele düşüyor | `llama-3.3-70b-versatile` Groq'ta yok; `groq/openai/gpt-oss-120b` ile değişti (canlı listeden) |
+| Boş cevap turu bitiriyordu | Araçlar çalışıyor, sonra HİÇBİR ŞEY gelmiyor | Sağlayıcı ne metin ne araç çağrısı döndürünce `done` yayımlanıp boş metin dönülüyordu; artık sağlayıcı hatası sayılıp sıradakine geçiliyor |
+| Aynı aramanın tekrarı | Ajan 15-20 adım dönüp sonuç vermiyor | Küçük yerel model neredeyse aynı sorguyu tekrarlıyordu; sorgular birebir aynı olmadığı için döngü koruması görmüyordu — `web_search` artık tur içinde benzer sorguyu reddediyor |
+| Tablo hücreleri ham markdown | `**Razer BlackShark V2 Pro**` ve tıklanamayan `[İnceleme](url)` | Tablolar satır içi kurallardan ÖNCE yer tutucuya alınıyordu; `inline()` ayrıldı ve hücrelere de uygulanıyor |
+| Tablo sütunları eziliyordu | Ürün adı "Ra / zer Barra / cuda X" diye bölünüyor | `width: 100%` + miras `word-break: break-word`; artık `width: auto; min-width: 100%` ve hücrede `word-break: normal` |
+| Yerel model cevap uyduruyordu | Fiyat sütunu boş, YouTube linkleri `watch?v=example_video_id` | Kotalar bitince tur qwen2.5:3b'ye kalıyordu; `tool_use` zincirinden çıkarıldı (`trivial`de duruyor) |
+| Toparlama tek zincire bakıyordu | `wrap_up_failed`, toplanan veri çöpe | `reasoning` zincirindeki iki sağlayıcı da 429 yiyince pes ediyordu; artık `tool_use` zinciri de deneniyor |
+| Araç kartları ters sırada | "Yaptıkları en altta, cevap en üstte" | `insertBefore(node, streamBody.nextSibling)` her yeni kartı gövdenin arkasına koyuyordu; artık gövdeden ÖNCE ekleniyor |
+| Kesilen tur veriyi çöpe atıyordu | "işlem durduruldu", toplanan araştırma kayıp | Döngü koruması turu kesince hiç cevap üretilmiyordu; artık araçlar kapatılıp eldeki veriyle cevap yazdırılıyor (`AgentLoop._wrap_up`) |
+| Daraltılmış dock taşıyordu | Kalem kalıyor, daraltma düğmesi sağa kayıyor | 46px'lik kolonda `[data-new]` gizlenmiyordu; başlık 52px'e taşıp düğmeyi pencere dışına itiyordu |
+| Şablon dizesini kapatan yorum | Uygulama "bağlanıyor"da asılı kalıyor | `mailbody.js`teki CSS şablonu, yorumdaki ters tırnakla (`` `color-scheme: dark` ``) erken kapandı; `SyntaxError` modül grafiğini düşürdü, `app.start()` hiç çalışmadı, WS açılmadı |
 
-Sıradaki adım (UI ya da çöp kutusu, hangisi önce ele alınırsa) hangisi
-olursa olsun bu davranış korunmalı: **backend'in API yüzeyi (`FAZ7_TESLIM.md`)
-UI kurulana kadar sabit kalmalı** — değiştirmek gerekirse önce o dosya
-güncellenmeli, UI onu okuyacak.
+**Ders (DECISIONS.md'de de yazılı):** UI doğrulaması `element.click()` ile
+yapılırsa hit-testing atlanır ve sayfayı kaplayan görünmez bir örtü
+görünmez. Gerçek fare olayı (`Input.dispatchMouseEvent`) ve
+`elementFromPoint` kullan.
