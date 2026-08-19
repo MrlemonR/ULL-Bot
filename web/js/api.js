@@ -76,6 +76,33 @@ export const api = {
     request(`/api/mail/messages/${id}/summarize?force=${force}`, { method: "POST", timeout: 180000 }),
   mailCategorizeBatch: (limit = 15) =>
     request(`/api/mail/categorize?limit=${limit}`, { method: "POST", timeout: 180000 }),
+  /** Seçili maillere toplu işlem — tek IMAP bağlantısı kullanır. */
+  mailBulk: (ids, action, category = "") =>
+    request("/api/mail/bulk", { method: "POST", body: { ids, action, category }, timeout: 180000 }),
+  /** Önbellekteki mailleri kural motorundan yeniden geçir (LLM yok). */
+  mailReclassify: () => request("/api/mail/reclassify", { method: "POST", timeout: 120000 }),
+  /* --- özet kuralları (Ayarlar → Mail kuralları) --- */
+  mailRules: () => request("/api/mail/rules"),
+  mailRuleAdd: (text) => request("/api/mail/rules", { method: "POST", body: { text } }),
+  mailRuleToggle: (id, enabled) =>
+    request(`/api/mail/rules/${id}`, { method: "PATCH", body: { enabled } }),
+  mailRuleDelete: (id) => request(`/api/mail/rules/${id}`, { method: "DELETE" }),
+
+  /* --- otomasyon --- */
+  automations: () => request("/api/automations"),
+  automation: (id) => request(`/api/automations/${id}`),
+  automationCreate: (payload) => request("/api/automations", { method: "POST", body: payload }),
+  automationUpdate: (id, payload) =>
+    request(`/api/automations/${id}`, { method: "PATCH", body: payload }),
+  automationDelete: (id) => request(`/api/automations/${id}`, { method: "DELETE" }),
+  automationStepAdd: (automationId, payload) =>
+    request(`/api/automations/${automationId}/steps`, { method: "POST", body: payload }),
+  automationStepMove: (id, delta) =>
+    request(`/api/automations/steps/${id}/move`, { method: "POST", body: { delta } }),
+  automationStepUpdate: (id, payload) =>
+    request(`/api/automations/steps/${id}`, { method: "PATCH", body: payload }),
+  automationStepDelete: (id) => request(`/api/automations/steps/${id}`, { method: "DELETE" }),
+  browserLogin: () => request("/api/browser/login", { method: "POST", timeout: 60000 }),
 
   /* --- takvim --- */
   calendarEvents: (start, end, q = "") => {

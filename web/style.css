@@ -41,9 +41,12 @@
   --warn-soft: #eab24a1c;
   --danger-soft: #f4626f1c;
 
-  --r-sm: 7px;
-  --r: 11px;
-  --r-lg: 15px;
+  /* Köşeler KARE. Kullanıcı isteği: "her şeyin köşeli kenarlardan oluşmasını
+   * istiyorum" — terminal estetiği. Değişkenler duruyor ki tema yazan biri
+   * tek satırla yuvarlatabilsin (bkz. docs/TEMA.md). */
+  --r-sm: 0;
+  --r: 0;
+  --r-lg: 0;
 
   --rail-w: 78px;
   --dock-w: 372px;
@@ -54,6 +57,25 @@
 }
 
 * { box-sizing: border-box; }
+
+/* --- terminal havası ------------------------------------------------------
+ *
+ * "Abartmadan" istendi: gövde metni normal yazı tipinde kalıyor, monospace
+ * yalnızca ETİKETLERDE — rozetler, sekmeler, sayaçlar, bölüm başlıkları.
+ * Böylece arayüz terminal gibi okunuyor ama mailler ve sohbet cevapları
+ * hâlâ rahat okunuyor. */
+.chip, .tab, .cat, .tag, .filter .n, .rail-btn span,
+.mail-item .when, .bulk-count, .fgroup, .summary-card h4 {
+  font-family: var(--mono);
+  letter-spacing: .01em;
+}
+
+/* Özet metni: model bazen 500 karakterlik bir Steam bağlantısı yazıyor.
+ * Kırılmazsa kart panelden taşıyor (kullanıcı ekran görüntüsüyle bildirdi). */
+.summary-text { overflow-wrap: anywhere; }
+.summary-text a { overflow-wrap: anywhere; }
+.summary-text p:first-child { margin-top: 0; }
+.summary-text p:last-child { margin-bottom: 0; }
 
 /* `hidden` niteliği UA stylesheet'ten gelir ve author stylesheet'teki
  * HERHANGİ bir `display` bildirimi onu ezer. Yani `.modal-backdrop
@@ -91,7 +113,7 @@ a { color: var(--accent); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #2a3346; border-radius: 6px; border: 3px solid transparent;
+  background: #2a3346; border-radius: 0; border: 3px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover { background: #3a465e; background-clip: content-box; }
@@ -118,7 +140,7 @@ a { color: var(--accent); }
 
 .rail-brand {
   width: 38px; height: 38px;
-  border-radius: 12px;
+  border-radius: 0;
   display: grid; place-items: center;
   background: linear-gradient(140deg, var(--accent), var(--accent-2));
   font-weight: 700; font-size: 17px; color: #fff;
@@ -147,13 +169,13 @@ a { color: var(--accent); }
 .rail-btn.is-active { background: var(--accent-soft); color: var(--accent); }
 .rail-btn.is-active::before {
   content: ""; position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
-  width: 3px; height: 22px; border-radius: 0 3px 3px 0; background: var(--accent);
+  width: 3px; height: 22px; border-radius: 0; background: var(--accent);
 }
 
 .rail-badge {
   position: absolute; top: 4px; right: 10px;
   min-width: 17px; height: 17px; padding: 0 4px;
-  border-radius: 9px;
+  border-radius: 0;
   background: var(--accent); color: #fff;
   font-size: 10px; font-weight: 700; line-height: 17px; text-align: center;
 }
@@ -188,22 +210,29 @@ a { color: var(--accent); }
   border-bottom: 1px solid var(--line-soft);
   background: var(--bg-1);
 }
-.topbar-title h1 { font-size: 16px; }
+.topbar-title h1 { font-size: 15px; font-family: var(--mono); letter-spacing: .04em; }
 .topbar-title p { margin: 2px 0 0; font-size: 12px; color: var(--text-3); }
 .topbar-right { display: flex; align-items: center; gap: 8px; flex: none; }
 
 .chip {
   padding: 4px 10px;
-  border-radius: 20px;
+  border-radius: 0;
   font-size: 11px; font-weight: 600; letter-spacing: .02em;
   background: var(--warn-soft); color: var(--warn);
   border: 1px solid #eab24a33;
   white-space: nowrap;
 }
 .chip-muted { background: var(--bg-3); color: var(--text-3); border-color: var(--line); }
+/* Üst bardaki tıklanabilir rozet ([ GEÇMİŞ ]). Görsel olarak diğer
+ * rozetlerle aynı ailede ama düğme gibi davranıyor. */
+.chip-btn {
+  background: var(--bg-3); color: var(--text-2);
+  border: 1px solid var(--line); cursor: pointer;
+}
+.chip-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--line-strong); }
 .chip-dot { display: flex; align-items: center; gap: 6px; }
 .chip-dot i {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 7px; height: 7px; border-radius: 0;
   background: var(--text-3); flex: none;
 }
 .chip-dot.is-ok i { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
@@ -290,7 +319,7 @@ a { color: var(--accent); }
   background: linear-gradient(140deg, var(--accent), var(--accent-2));
   color: #fff;
   padding: 10px 14px;
-  border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg);
+  border-radius: var(--r-lg);
   white-space: pre-wrap; word-break: break-word;
   box-shadow: 0 8px 22px -14px var(--accent);
 }
@@ -300,7 +329,7 @@ a { color: var(--accent); }
   background: var(--bg-2);
   border: 1px solid var(--line-soft);
   padding: 11px 14px;
-  border-radius: var(--r-lg) var(--r-lg) var(--r-lg) 4px;
+  border-radius: var(--r-lg);
   word-break: break-word;
 }
 .msg-bot .body > *:first-child { margin-top: 0; }
@@ -310,7 +339,7 @@ a { color: var(--accent); }
 .msg-bot li { margin: 2px 0; }
 .msg-bot code {
   font-family: var(--mono); font-size: 12.5px;
-  background: var(--bg-0); padding: 1px 5px; border-radius: 4px;
+  background: var(--bg-0); padding: 1px 5px; border-radius: 0;
   border: 1px solid var(--line-soft);
 }
 .msg-bot pre {
@@ -325,7 +354,7 @@ a { color: var(--accent); }
   margin-top: 7px; font-size: 10.5px;
 }
 .tag {
-  padding: 2.5px 8px; border-radius: 6px;
+  padding: 2.5px 8px; border-radius: 0;
   background: var(--bg-3); color: var(--text-3);
   border: 1px solid var(--line-soft);
   font-weight: 500;
@@ -436,7 +465,7 @@ a { color: var(--accent); }
 
 .send-btn {
   width: 34px; height: 34px; flex: none;
-  border-radius: 9px;
+  border-radius: 0;
   background: linear-gradient(140deg, var(--accent), var(--accent-2));
   display: grid; place-items: center;
   transition: transform .12s, opacity .12s;
@@ -447,7 +476,7 @@ a { color: var(--accent); }
 
 .composer-hints { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
 .hint {
-  padding: 6px 12px; border-radius: 20px;
+  padding: 6px 12px; border-radius: 0;
   background: var(--bg-2); border: 1px solid var(--line);
   color: var(--text-2); font-size: 12px;
   transition: all .13s;
@@ -514,40 +543,99 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
   padding: 14px 16px;
   margin-bottom: 14px;
 }
-.panel h3 { font-size: 12.5px; color: var(--text-2); margin-bottom: 11px; }
+.panel h3 { font-size: 12.5px; color: var(--text-2); margin: 0; }
+
+/* Paneller <details>: başlığa tıklayınca açılıp kapanıyor (kullanıcı
+ * isteği). Varsayılan üçgeni gizleyip yerine ASCII gösterge koyuyoruz. */
+.panel > summary {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; list-style: none;
+  padding-bottom: 11px;
+  user-select: none;
+}
+.panel > summary::-webkit-details-marker { display: none; }
+.panel > summary::before {
+  content: "[+]";
+  font-family: var(--mono); font-size: 11px; color: var(--text-3);
+  transition: color .12s;
+}
+.panel[open] > summary::before { content: "[-]"; color: var(--accent); }
+.panel > summary:hover::before { color: var(--text); }
+.panel:not([open]) > summary { padding-bottom: 0; }
+
+/* --- mail özet kuralları --- */
+.rule-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--line-soft);
+}
+.rule-row:last-of-type { border-bottom: none; }
+.rule-row.is-off .rule-text { color: var(--text-3); text-decoration: line-through; }
+.rule-text { flex: 1; font-size: 12.5px; }
+.rule-form { display: flex; gap: 8px; margin-top: 10px; }
+.rule-form input { flex: 1; font-size: 12.5px; padding: 7px 10px; }
 
 /* ---------------------------------------------------------------- mail */
 
 .mail-layout {
+  /* Üst bar + (liste | detay). Kategori şeridi eskiden soldaki 186px'lik
+   * kolondaydı; kullanıcı onu üste istedi, böylece liste ve detay için
+   * daha çok yer kaldı ve sağdaki asistan dock'u hiç daralmıyor. */
   display: grid;
-  grid-template-columns: 186px 320px 1fr;
+  grid-template-rows: auto 1fr;
   height: 100%; min-height: 0;
 }
-.mail-side {
-  border-right: 1px solid var(--line-soft);
-  padding: 13px 11px;
-  overflow-y: auto;
-  display: flex; flex-direction: column; gap: 10px;
+.mail-topbar {
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  padding: 9px 12px;
+  display: grid; gap: 8px;
 }
-.mail-search input { font-size: 12.5px; padding: 7px 10px; }
-
-.filters { display: grid; gap: 2px; }
-.filters .fgroup {
-  font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--text-3); margin: 10px 0 4px; padding-left: 9px;
-}
-.filter {
+.mail-tools {
   display: flex; align-items: center; gap: 8px;
-  padding: 6.5px 9px; border-radius: var(--r-sm);
-  color: var(--text-2); font-size: 12.5px;
-  width: 100%; text-align: left;
-  transition: background .12s, color .12s;
 }
-.filter:hover { background: var(--bg-2); color: var(--text); }
-.filter.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-.filter .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.filter .n { margin-left: auto; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.filter.is-active .n { color: var(--accent); }
+.mail-tools .mail-search { flex: 1; }
+.mail-search input { font-size: 12.5px; padding: 7px 10px; width: 100%; }
+
+/* Kategoriler: yatay sekme şeridi. Dar pencerede kaydırılıyor. */
+.mail-tabs {
+  display: flex; align-items: center; gap: 4px;
+  overflow-x: auto; padding-bottom: 2px;
+}
+.mail-tabs::-webkit-scrollbar { height: 6px; }
+.tab {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 10px;
+  color: var(--text-2); font-size: 12.5px;
+  white-space: nowrap; flex: none;
+  border: 1px solid transparent;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.tab:hover { background: var(--bg-2); color: var(--text); }
+.tab.is-active {
+  background: var(--accent-soft); color: var(--accent);
+  border-color: var(--accent-line); font-weight: 500;
+}
+.tab .dot { width: 7px; height: 7px; flex: none; }
+.tab .n { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tab.is-active .n { color: var(--accent); }
+.tab-sep { width: 1px; height: 18px; background: var(--line); flex: none; margin: 0 4px; }
+
+/* Seçim varken kategorilerin YERİNE bu şerit gelir. */
+.mail-bulk {
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;
+}
+.bulk-count {
+  font-family: var(--mono); font-size: 12px;
+  color: var(--accent); margin-right: 4px;
+}
+.bulk-sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+
+.mail-panes {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  min-height: 0;
+}
 
 .mail-list { border-right: 1px solid var(--line-soft); overflow-y: auto; min-height: 0; }
 .mail-item {
@@ -576,10 +664,10 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .mail-item .marks { display: flex; gap: 4px; align-items: center; flex: none; font-size: 11px; }
-.unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.unread-dot { width: 7px; height: 7px; border-radius: 0; background: var(--accent); flex: none; }
 
 .cat {
-  padding: 1.5px 7px; border-radius: 5px;
+  padding: 1.5px 7px; border-radius: 0;
   font-size: 10px; font-weight: 600; flex: none;
   border: 1px solid transparent;
 }
@@ -592,15 +680,46 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
 .cat-diger    { background: var(--bg-3); color: var(--text-3); border-color: var(--line); }
 
 .mail-detail { overflow-y: auto; min-height: 0; padding: 0; }
+/* Başlık barı: yapışkan ve KÜÇÜLEBİLİR.
+ *
+ * Tam hâlde ~180px yer kaplıyordu ve uzun maillerde gövdeye çok az yer
+ * kalıyordu (kullanıcı bildirdi). `is-compact` sınıfı gönderen bloğunu,
+ * kategori gerekçesini ve araç satırını gizleyip barı tek satıra indiriyor.
+ * Geçiş animasyonlu ki ne olduğu anlaşılsın. */
 .mail-detail-head {
   padding: 18px 22px 15px;
   border-bottom: 1px solid var(--line-soft);
   position: sticky; top: 0; background: var(--bg-0); z-index: 2;
+  transition: padding .18s ease;
 }
+.mail-detail-head h2 { transition: font-size .18s ease; }
+
+.mail-detail-head.is-compact { padding: 8px 22px 6px; }
+.mail-detail-head.is-compact h2 { font-size: 13.5px; margin-bottom: 0; }
+.mail-detail-head.is-compact .mail-from,
+.mail-detail-head.is-compact .mail-actions,
+.mail-detail-head.is-compact .cat-reason,
+.mail-detail-head.is-compact .code-card { display: none; }
+.mail-detail-head.is-compact .mail-nav { margin-bottom: 4px; }
+.mail-detail-head.is-compact .head-toggle .chev { transform: rotate(180deg); }
+
+.cat-reason { margin-top: 9px; }
+
+/* Barın SAĞ ALT köşesinde küçültme/büyütme düğmesi. */
+.head-toggle {
+  position: absolute; right: 10px; bottom: -1px;
+  width: 26px; height: 16px;
+  display: grid; place-items: center;
+  background: var(--bg-2); border: 1px solid var(--line);
+  color: var(--text-3);
+  transition: background .12s, color .12s;
+}
+.head-toggle:hover { background: var(--bg-hover); color: var(--text); }
+.head-toggle .chev { font-size: 8px; line-height: 1; transition: transform .18s ease; }
 .mail-detail-head h2 { font-size: 17px; line-height: 1.35; margin-bottom: 9px; }
 .mail-from { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .avatar {
-  width: 34px; height: 34px; border-radius: 50%; flex: none;
+  width: 34px; height: 34px; border-radius: 0; flex: none;
   display: grid; place-items: center; font-weight: 600; font-size: 13px; color: #fff;
 }
 .mail-from .who { font-size: 13px; }
@@ -681,13 +800,13 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
 .cal-cell.is-out .n { color: #3b4457; }
 .cal-cell.is-today .n {
   background: var(--accent); color: #fff;
-  width: 21px; height: 21px; border-radius: 50%;
+  width: 21px; height: 21px; border-radius: 0;
   display: grid; place-items: center;
 }
 .cal-cell.is-selected { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent-line); }
 .cal-cell .n { font-size: 11.5px; color: var(--text-2); font-weight: 500; flex: none; }
 .cal-ev {
-  font-size: 10.5px; padding: 2px 6px; border-radius: 4px;
+  font-size: 10.5px; padding: 2px 6px; border-radius: 0;
   background: var(--accent-soft); color: #bcd0ff;
   border-left: 2px solid var(--accent);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -730,17 +849,17 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
 .qcard .model { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
 .qwin { margin-bottom: 10px; }
 .qwin-top { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-bottom: 4px; }
-.qbar { height: 5px; border-radius: 3px; background: var(--bg-3); overflow: hidden; }
-.qbar i { display: block; height: 100%; border-radius: 3px; transition: width .3s; }
+.qbar { height: 5px; border-radius: 0; background: var(--bg-3); overflow: hidden; }
+.qbar i { display: block; height: 100%; border-radius: 0; transition: width .3s; }
 .qcard-foot { display: flex; gap: 6px; margin-top: 12px; }
 
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
 .bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.5px; min-width: 0; }
-.bar-seg { border-radius: 2px 2px 0 0; min-height: 2px; }
+.bar-seg { border-radius: 0; min-height: 2px; }
 .bar-lbl { font-size: 9.5px; color: var(--text-3); text-align: center; margin-top: 5px; }
 .legend { display: flex; gap: 13px; margin-top: 13px; flex-wrap: wrap; }
 .legend span { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
-.legend i { width: 9px; height: 9px; border-radius: 2px; }
+.legend i { width: 9px; height: 9px; border-radius: 0; }
 
 /* ---------------------------------------------------------------- geçmiş */
 
@@ -832,7 +951,7 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
   font-size: 12.5px; color: var(--text-2); list-style: none;
 }
 .oauth-steps li b {
-  flex: none; width: 18px; height: 18px; border-radius: 50%;
+  flex: none; width: 18px; height: 18px; border-radius: 0;
   background: var(--bg-3); color: var(--text-3);
   font-size: 10.5px; font-weight: 700; display: grid; place-items: center;
 }
@@ -877,7 +996,7 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
 .spin {
   width: 13px; height: 13px; flex: none;
   border: 2px solid var(--line-strong); border-top-color: var(--accent);
-  border-radius: 50%; animation: spin .7s linear infinite;
+  border-radius: 0; animation: spin .7s linear infinite;
   display: inline-block; vertical-align: -2px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -885,19 +1004,59 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
 /* dar pencere: dock ve yan paneller daralır */
 @media (max-width: 1240px) {
   :root { --dock-w: 310px; }
-  .mail-layout { grid-template-columns: 164px 272px 1fr; }
+  .mail-panes { grid-template-columns: 292px 1fr; }
   .cal-layout { grid-template-columns: 1fr 250px; }
 }
 @media (max-width: 1060px) {
-  .mail-layout { grid-template-columns: 150px 1fr; }
+  /* Dar pencerede tek kolon: liste ya da detay, ikisi birden değil. */
+  .mail-panes { grid-template-columns: 1fr; }
   .mail-detail { display: none; }
-  .mail-layout.show-detail { grid-template-columns: 150px 1fr; }
   .mail-layout.show-detail .mail-list { display: none; }
   .mail-layout.show-detail .mail-detail { display: block; }
 }
 
-/* Sürgün kategoriler (spam) — şeridin altında, ayrı ve sönük */
-.filters .fgroup-exile { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+/* Mail listesindeki seçim kutusu — sadece üzerine gelince ya da seçiliyken
+ * belirginleşiyor, yoksa liste onlarca kutuyla gürültülü görünüyor. */
+/* Seçim kutusu ASCII: [ ] / [X]. Native checkbox tarayıcının kendi
+ * yuvarlak/mavi çizimini kullanıyordu ve temayla hiç uyuşmuyordu; üstelik
+ * kullanıcının teması onu boyayamıyordu. Gerçek `<input>` DURUYOR (klavye
+ * ve erişilebilirlik için), sadece görsel olarak gizlenip yerine metin
+ * çiziliyor. */
+.mail-check { display: flex; align-items: center; flex: none; cursor: pointer; }
+.mail-check input {
+  position: absolute; opacity: 0; width: 0; height: 0; margin: 0;
+}
+.mail-check .box::before {
+  content: "[ ]";
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text-3); letter-spacing: -.04em;
+}
+.mail-check input:checked + .box::before { content: "[X]"; color: var(--accent); }
+.mail-check:hover .box::before { color: var(--text-2); }
+.mail-check input:focus-visible + .box::before { outline: 1px solid var(--accent); }
+.mail-item.is-checked { background: var(--accent-soft); }
+
+/* Detay üstü gezinme: önceki / sonraki / kapat */
+.mail-nav { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.mail-nav .icon-btn:disabled { opacity: .35; cursor: default; }
+
+/* Kategori rozeti mail alanının SOL ÜSTÜNDE; gezinme düğmeleri sağda. */
+.mail-nav .cat { padding: 4px 10px; }
+.mail-nav .nav-gap { flex: 1; }
+
+.mail-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Aktivasyon kodu kartı — kodu aramaya gerek kalmasın. */
+.code-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; margin: 10px 0;
+  background: var(--bg-3); border: 1px solid var(--line-strong);
+}
+.code-label { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.code-value {
+  font-family: var(--mono); font-size: 20px; font-weight: 700;
+  letter-spacing: .12em; color: var(--text);
+}
 
 /* HTML mail "kağıdı": gönderenin tasarladığı beyaz zeminde durur
  * (bkz. mailbody.js) — koyu arayüzde bir kart gibi görünsün. */
@@ -955,4 +1114,330 @@ label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-b
   margin: 6px 8px 6px 0;
   vertical-align: top;
   background: var(--bg-1);
+}
+
+/* ==========================================================================
+   HAREKET — "her şey çok statik duruyor" (kullanıcı isteği)
+   ==========================================================================
+
+   Üç kural:
+   1. Hiçbir efekt okumayı zorlaştırmayacak. Işıklar KENARLARDA döner,
+      metnin üstünde değil.
+   2. Her efektin bir işi var: neyin aktif olduğunu, neyin çalıştığını,
+      neyin yeni geldiğini gösterir. Süs için hareket yok.
+   3. `prefers-reduced-motion` açıksa hepsi susar (en altta).             */
+
+/* --- aktif sekmenin etrafında dönen ışık ---------------------------------
+ *
+ * Kullanıcının istediği efekt (Odysseus AI'daki gibi): kenarda dolaşan bir
+ * parıltı. Tek bir konik gradyan döndürülüyor; içteki dolgu katmanı onu
+ * maskelediği için yalnızca 1px'lik çerçeve parlıyor. */
+@property --spin {
+  syntax: "<angle>"; inherits: false; initial-value: 0deg;
+}
+
+.tab.is-active, .rail-btn.is-active {
+  position: relative;
+  isolation: isolate;
+}
+.tab.is-active::after, .rail-btn.is-active::after {
+  content: "";
+  position: absolute; inset: -1px;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--spin),
+    transparent 0deg, transparent 250deg,
+    var(--accent) 300deg, #fff 320deg, var(--accent) 340deg,
+    transparent 360deg
+  );
+  /* Yalnızca çerçeve görünsün: iç alanı maskele. */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: spin-border 3.2s linear infinite;
+  pointer-events: none;
+  z-index: -1;
+}
+@keyframes spin-border { to { --spin: 360deg; } }
+
+/* --- görünüm geçişi ------------------------------------------------------ */
+.view.is-active { animation: view-in .22s ease-out; }
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+/* --- mail listesi: sırayla belirme --------------------------------------- */
+.mail-item { animation: row-in .2s ease-out backwards; }
+.mail-item:nth-child(1) { animation-delay: .00s; }
+.mail-item:nth-child(2) { animation-delay: .02s; }
+.mail-item:nth-child(3) { animation-delay: .04s; }
+.mail-item:nth-child(4) { animation-delay: .06s; }
+.mail-item:nth-child(5) { animation-delay: .08s; }
+.mail-item:nth-child(6) { animation-delay: .10s; }
+.mail-item:nth-child(7) { animation-delay: .12s; }
+.mail-item:nth-child(8) { animation-delay: .14s; }
+@keyframes row-in {
+  from { opacity: 0; transform: translateX(-6px); }
+}
+
+/* Okunmamış nokta nefes alsın — göz oraya gitsin. */
+.unread-dot { animation: pulse-dot 2.4s ease-in-out infinite; }
+@keyframes pulse-dot {
+  50% { opacity: .45; transform: scale(.82); }
+}
+
+/* --- düğmeler: bastırınca geri bildirim ---------------------------------- */
+.btn, .icon-btn, .tab, .rail-btn { transition: transform .09s ease, background .12s, color .12s; }
+.btn:active, .icon-btn:active, .tab:active { transform: translateY(1px); }
+
+/* --- ajan çalışırken: terminal imleci ------------------------------------ */
+.msg-bot .body.cursor::after {
+  content: "▌";
+  color: var(--accent);
+  animation: blink-caret 1s steps(2, start) infinite;
+  margin-left: 1px;
+}
+@keyframes blink-caret { 50% { opacity: 0; } }
+
+/* --- araç kartı çalışırken: ASCII çevirici ------------------------------- */
+.tool .spin { display: inline-block; width: 1ch; text-align: center; }
+.tool .spin::before {
+  content: "|";
+  font-family: var(--mono);
+  color: var(--accent);
+  animation: ascii-spin .32s steps(1) infinite;
+}
+@keyframes ascii-spin {
+  0%   { content: "|"; }
+  25%  { content: "/"; }
+  50%  { content: "-"; }
+  75%  { content: "\\"; }
+}
+
+/* --- "çalışıyor" rozeti: tarayıcı çizgisi -------------------------------- */
+.chip-dot.is-busy {
+  background-image: linear-gradient(90deg, transparent, var(--accent-soft), transparent);
+  background-size: 200% 100%;
+  animation: scan 1.4s linear infinite;
+}
+@keyframes scan { to { background-position: -200% 0; } }
+
+/* --- bildirim baloncuğu -------------------------------------------------- */
+.toast { animation: toast-in .2s ease-out; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(14px); }
+}
+
+/* --- ayarlar panelleri açılırken ----------------------------------------- */
+.panel[open] > *:not(summary) { animation: view-in .18s ease-out; }
+
+/* --- hareket istemeyenler ------------------------------------------------
+ * Sistem "hareketi azalt" diyorsa hepsi susar; arayüz yine çalışır. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+/* ============================================================== OTOMASYON */
+
+.auto-layout {
+  display: grid;
+  /* sol panel | ayırıcı | tarayıcı — orta sütun sürüklenebilir çubuk */
+  grid-template-columns: 420px 6px 1fr;
+  height: 100%; min-height: 0;
+}
+
+/* Sürüklenebilir ayırıcı. Genişlik `localStorage`da tutuluyor: kullanıcı
+ * her açılışta yeniden ayarlamak zorunda kalmasın. */
+.auto-splitter {
+  cursor: col-resize;
+  background: var(--line-soft);
+  transition: background .12s;
+  position: relative;
+}
+.auto-splitter:hover, .auto-splitter:active { background: var(--accent); }
+/* Tutma alanı görünenden geniş: 6px'lik bir çubuğu fareyle yakalamak zor. */
+.auto-splitter::after {
+  content: ""; position: absolute; inset: 0 -5px;
+}
+
+.auto-side {
+  display: grid;
+  /* seçim | sohbet | yazma | adım başlığı | adımlar */
+  grid-template-rows: auto 1fr auto auto minmax(120px, 40%);
+  border-right: 1px solid var(--line-soft);
+  min-height: 0;
+}
+
+.auto-picker {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line-soft);
+}
+.auto-select {
+  flex: 1; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); padding: 6px 8px;
+  font-family: var(--mono); font-size: 12px;
+}
+
+.auto-chat { overflow-y: auto; padding: 12px; min-height: 0; }
+.auto-msg {
+  padding: 8px 11px; margin-bottom: 8px;
+  border: 1px solid var(--line-soft); background: var(--bg-2);
+  font-size: 12.5px; white-space: pre-wrap;
+}
+.auto-msg.role-user { background: var(--accent-soft); border-color: var(--accent-line); }
+
+.auto-approval {
+  border: 1px solid var(--warn); background: var(--warn-soft);
+  padding: 10px 11px; margin-bottom: 8px; font-size: 12.5px;
+}
+.auto-approval .what {
+  font-family: var(--mono); font-size: 11.5px;
+  color: var(--text-2); margin-top: 5px;
+}
+.auto-approval .row { display: flex; gap: 6px; margin-top: 9px; }
+
+.auto-form { padding: 10px 12px; border-top: 1px solid var(--line-soft); }
+
+.auto-steps-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
+}
+.auto-steps-head .btn { margin-left: auto; }
+.auto-steps-head .btn + .btn { margin-left: 0; }
+.auto-stepwise { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.auto-stepwise input { position: absolute; opacity: 0; width: 0; height: 0; }
+.auto-stepwise .box::before {
+  content: "[ ]"; font-family: var(--mono); color: var(--text-3);
+}
+.auto-stepwise input:checked + .box::before { content: "[X]"; color: var(--accent); }
+
+.auto-steps { overflow-y: auto; padding: 8px 12px 14px; min-height: 0; }
+.auto-step {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: start; gap: 7px;
+  padding: 7px 8px; margin-bottom: 4px;
+  border: 1px solid transparent;
+  font-size: 12.5px;
+  transition: background .12s, border-color .12s;
+}
+.auto-step:hover { background: var(--bg-2); border-color: var(--line-soft); }
+.auto-step .mark { font-family: var(--mono); color: var(--text-3); }
+.auto-step .n { font-family: var(--mono); color: var(--text-3); }
+.auto-step .intent { line-height: 1.45; }
+.auto-step .tools { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
+.auto-step:hover .tools { opacity: 1; }
+.auto-step .detail {
+  grid-column: 3 / -1;
+  font-family: var(--mono); font-size: 11px; color: var(--text-3);
+  margin-top: 4px; overflow-wrap: anywhere;
+}
+.auto-step .detail.err { color: var(--danger); }
+
+.auto-step.is-calisiyor { background: var(--accent-soft); border-color: var(--accent-line); }
+.auto-step.is-calisiyor .mark { color: var(--accent); animation: blink-caret 1s steps(2) infinite; }
+.auto-step.is-tamam .mark { color: var(--ok); }
+.auto-step.is-hata { border-color: var(--danger); background: var(--danger-soft); }
+.auto-step.is-hata .mark { color: var(--danger); }
+.auto-step.is-atlandi { opacity: .55; }
+
+/* --- sağ taraf: canlı tarayıcı --- */
+.auto-view { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+.auto-toolbar {
+  display: flex; align-items: center; gap: 7px;
+  padding: 9px 12px; border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+.auto-url {
+  flex: 1; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); padding: 6px 9px;
+  font-family: var(--mono); font-size: 12px;
+}
+.auto-screen {
+  overflow: auto; min-height: 0;
+  background: var(--bg-0);
+  display: grid; place-items: start center;
+  padding: 12px;
+}
+.auto-screen img {
+  max-width: 100%; border: 1px solid var(--line);
+  cursor: crosshair;
+}
+.auto-screen img:focus-visible { outline: 2px solid var(--accent); }
+.auto-empty { align-self: center; text-align: center; color: var(--text-2); }
+
+@media (max-width: 1180px) {
+  .auto-layout { grid-template-columns: 340px 6px 1fr; }
+}
+
+
+/* Uygulama içi form diyaloğu (sistem `prompt`u yerine). */
+.dlg-field { display: block; margin-bottom: 14px; }
+.dlg-field > span { display: block; font-size: 12.5px; margin-bottom: 4px; }
+.dlg-field > em {
+  display: block; font-style: normal;
+  font-size: 11.5px; color: var(--text-3); margin-bottom: 6px;
+}
+.dlg-field input {
+  width: 100%; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); padding: 8px 10px;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.dlg-field input:focus { outline: none; border-color: var(--accent); }
+
+/* Diyalogdaki liste alanı: her satır bir site (virgülle ayırmak yerine). */
+.dlg-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.dlg-row { display: flex; gap: 6px; align-items: center; }
+.dlg-row input {
+  flex: 1; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); padding: 7px 9px;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.dlg-row input:focus { outline: none; border-color: var(--accent); }
+
+/* Açık sekmeler seçicisi — birden fazla sekme varken görünür. */
+.auto-tabs {
+  max-width: 220px;
+  background: var(--bg-2); color: var(--text-2);
+  border: 1px solid var(--line); padding: 5px 7px;
+  font-family: var(--mono); font-size: 11.5px;
+}
+
+
+/* Adım türü rozeti — listede bir bakışta ne yaptığı anlaşılsın. */
+.kind {
+  display: inline-block;
+  font-family: var(--mono); font-size: 10px;
+  padding: 1px 5px; margin-right: 6px;
+  border: 1px solid var(--line); color: var(--text-3);
+  vertical-align: 1px;
+}
+.kind-sayfa { color: var(--info); border-color: #4fb6e055; }
+.kind-oku { color: var(--ok); border-color: #34c98a55; }
+.kind-yaz { color: var(--warn); border-color: #eab24a55; }
+.kind-tikla { color: var(--accent); border-color: var(--accent-line); }
+.kind-kontrol { color: var(--accent-2); border-color: #8b6bff55; }
+
+/* Canlı ilerleme günlüğü: ne yaptığı ve nerede takıldığı. */
+.auto-log {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--text-3); padding: 2px 0;
+  border-left: 2px solid var(--line); padding-left: 8px;
+  margin-bottom: 2px; overflow-wrap: anywhere;
+}
+.auto-log.is-err { color: var(--danger); border-left-color: var(--danger); }
+
+.dlg-field select {
+  width: 100%; background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--line); padding: 7px 9px;
+  font-family: var(--mono); font-size: 12.5px;
 }

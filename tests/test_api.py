@@ -101,3 +101,70 @@ def test_memory_delete_missing_key_reports_false(workspace: Path) -> None:
     client = TestClient(app)
     resp = client.delete("/api/memory/nope")
     assert resp.json() == {"ok": False, "key": "nope"}
+
+
+# --- kullanıcı teması -------------------------------------------------------
+
+
+def test_tema_dosyasi_yoksa_bos_css_donuyor(workspace: Path) -> None:
+    """404 DEĞİL: tarayıcı konsolunu kirletir ve "bozuk" izlenimi verir."""
+    client = TestClient(app)
+    response = client.get("/theme.css")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/css")
+    assert response.text == ""
+
+
+def test_tema_dosyasi_varsa_icerigi_donuyor(workspace: Path, tmp_path, monkeypatch) -> None:
+    from app.settings import settings
+
+    theme = tmp_path / "tema.css"
+    theme.write_text(":root { --accent: #00ff9c; }", encoding="utf-8")
+    monkeypatch.setattr(settings, "user_theme", str(theme))
+
+    client = TestClient(app)
+    response = client.get("/theme.css")
+    assert response.status_code == 200
+    assert "--accent: #00ff9c" in response.text
+
+
+def test_tema_style_css_ten_SONRA_yukleniyor():
+    """Sıra önemli: kullanıcının kuralları varsayılanı ezebilmeli."""
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent / "web" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert html.index("/static/style.css") < html.index("/theme.css")
+
+
+def test_index_ve_tema_da_onbellekten_dogrulaniyor(workspace: Path) -> None:
+    """`/` ve `/theme.css` `/static` altında DEĞİL — mount başlığı onlara geçmez.
+
+    Sahada bu boşluk şuna yol açtı: sunucu güncellendi, `style.css` ve
+    modüller yeni geldi ama tarayıcı ESKİ `index.html`i diskten servis etti;
+    kullanıcı yeni kategorileri ve yeni mail düzenini hiç göremedi, üstelik
+    yeni CSS eski HTML'e uygulandığı için ekran bozuk göründü.
+    """
+    client = TestClient(app)
+    for path in ("/", "/theme.css"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers.get("cache-control") == "no-cache", (
+            f"{path} önbellek doğrulaması istemiyor"
+        )
+
+
+def test_statik_dosyalar_onbellekten_dogrulaniyor(workspace: Path) -> None:
+    """`Cache-Control: no-cache` olmadan tarayıcı ESKİ arayüzü gösteriyor.
+
+    WebKit/Chromium `Cache-Control` yokken "heuristic freshness" uyguluyor:
+    dosyanın yaşına bakıp sunucuya hiç sormadan diskten servis ediyor.
+    Sahada yaşandı — CSS/JS değişti, uygulama yeniden başlatıldı, ekranda
+    eski sürüm çıktı. `no-cache` "önbelleğe alma" değil "kullanmadan önce
+    SOR" demek; dosya değişmediyse 304 dönüyor.
+    """
+    client = TestClient(app)
+    response = client.get("/static/style.css")
+    assert response.status_code == 200
+    assert response.headers.get("cache-control") == "no-cache"

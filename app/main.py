@@ -20,9 +20,15 @@ from app.calendar.store import local_tz
 from app.db.connection import init_db
 from app.mail import secrets as mail_secrets
 from app.mail import service as mail_service
+from app.browser import browser
+from app.browser import actions as browser_actions
+from app.browser import agent as browser_agent
+from app.browser import session as browser_session
+from app.browser import store as automation_store
 from app.mail import store as mail_store
-from app.mail.classify import CATEGORIES
+from app.mail.classify import CATEGORIES, find_code
 from app.mail.imap_client import MailError
+from app.mail.parser import now_utc_iso
 from app.memory.store import (
     delete_note,
     get_session_messages,
@@ -58,12 +64,63 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="ULL-Bot Orchestrator", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+class _NoCacheStatic(StaticFiles):
+    """Arayüz dosyalarını her açılışta doğrula.
+
+    Neden gerekli: WebKit (ve Chromium) `Cache-Control` yokken "heuristic
+    freshness" uyguluyor — dosyanın yaşına bakıp sunucuya HİÇ sormadan
+    diskten servis ediyor. Sahada şu yaşandı: CSS/JS değiştirildi, uygulama
+    yeniden başlatıldı, ekranda ESKİ sürüm çıktı ve sorun kodda sanıldı.
+
+    `no-cache` "önbelleğe alma" demek değil; "kullanmadan önce SOR" demek.
+    Dosya değişmediyse 304 dönüyor, yani maliyeti yok.
+    """
+
+    def is_not_modified(self, response_headers, request_headers) -> bool:  # type: ignore[override]
+        return super().is_not_modified(response_headers, request_headers)
+
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", _NoCacheStatic(directory=WEB_DIR), name="static")
 
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
+    """Uygulama kabuğu.
+
+    `no-cache` ŞART: bu dosya `/static` altında değil, yani mount'taki
+    başlık buraya uygulanmıyor. Başlıksız kaldığında tarayıcı "heuristic
+    freshness" ile eski `index.html`i diskten servis ediyor ve kullanıcı,
+    sunucu güncel olsa bile ESKİ arayüzü görüyor — sahada tam olarak bu
+    yaşandı: yeni kategoriler ve yeni düzen ekrana hiç gelmedi.
+    """
+    return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/theme.css")
+def user_theme() -> PlainTextResponse:
+    """Kullanıcının kendi teması: `~/.config/ull-bot/theme.css`.
+
+    `index.html` bunu `style.css`ten SONRA yüklüyor, yani buradaki her kural
+    varsayılanı ezer. Dosya yoksa boş CSS dönüyoruz — 404 tarayıcı konsolunu
+    kirletir ve "bir şey bozuldu" izlenimi verir.
+
+    Neden ayrı bir dosya: uygulamanın kendi `style.css`i güncellemelerde
+    değişiyor; kullanıcının değişiklikleri orada durursa her güncellemede
+    kaybolur. Ayrıntı: docs/TEMA.md
+    """
+    path = settings.user_theme_path
+    css = ""
+    if path.is_file():
+        try:
+            css = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            css = f"/* tema okunamadı: {exc} */"
+    return PlainTextResponse(css, media_type="text/css", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/config")
@@ -85,6 +142,10 @@ def config() -> dict[str, Any]:
         },
         "categories": CATEGORIES,
         "default_reminder_minutes": settings.default_reminder_minutes,
+        # Ayarlar panelindeki [ TEMA ] bölümü — kullanıcı dosyayı nereye
+        # koyacağını uygulamadan görebilsin (bkz. docs/TEMA.md).
+        "user_theme_path": str(settings.user_theme_path),
+        "user_theme_exists": settings.user_theme_path.is_file(),
     }
 
 
@@ -296,15 +357,36 @@ def mail_messages(
     q: str = "",
     limit: int = 100,
     offset: int = 0,
+    exclude: str = "",
 ) -> dict[str, Any]:
+    """`exclude`: virgülle ayrılmış kategoriler — "Öncelikli" görünümü bunu
+    kullanıyor (reklam ve diğer dışarıda kalsın diye)."""
+    excluded = tuple(part.strip() for part in exclude.split(",") if part.strip())
     return {
         "messages": mail_store.list_messages(
             account_id=account_id, folder=folder, category=category,
             unread_only=unread, flagged_only=flagged, query=q,
             limit=max(1, min(limit, 300)), offset=max(0, offset),
+            exclude_categories=excluded,
         ),
         "counts": mail_store.counts(account_id),
     }
+
+
+@app.post("/api/mail/bulk")
+async def mail_bulk(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Seçili maillere toplu işlem (tek IMAP bağlantısıyla)."""
+    ids = [int(value) for value in (payload.get("ids") or [])]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Seçili mail yok.")
+    try:
+        return await mail_service.bulk(
+            ids,
+            action=str(payload.get("action") or ""),
+            category=str(payload.get("category") or ""),
+        )
+    except MailError as exc:
+        raise _mail_error(exc) from exc
 
 
 @app.get("/api/mail/messages/{message_id}")
@@ -312,7 +394,49 @@ def mail_message(message_id: int) -> dict[str, Any]:
     message = mail_store.get_message(message_id)
     if message is None:
         raise HTTPException(status_code=404, detail=f"Mail bulunamadı: {message_id}")
+    # Doğrulama kodunu burada çıkarıyoruz, saklamıyoruz: kod tek kullanımlık
+    # ve mailin gövdesi zaten elimizde. UI "Kodu kopyala" düğmesini bu alan
+    # doluysa gösteriyor.
+    message["code"] = find_code(message.get("body_text") or "")
     return message
+
+
+@app.get("/api/mail/rules")
+def mail_rules() -> dict[str, Any]:
+    """Kullanıcının özet kuralları (Ayarlar → Mail kuralları)."""
+    return {"rules": mail_store.list_rules()}
+
+
+@app.post("/api/mail/rules")
+def mail_rule_add(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Kural metni boş olamaz.")
+    if len(text) > 400:
+        raise HTTPException(status_code=400, detail="Kural 400 karakterden kısa olmalı.")
+    return mail_store.add_rule(text)
+
+
+@app.patch("/api/mail/rules/{rule_id}")
+def mail_rule_toggle(rule_id: int, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    mail_store.set_rule_enabled(rule_id, bool(payload.get("enabled")))
+    return {"ok": True, "id": rule_id, "enabled": bool(payload.get("enabled"))}
+
+
+@app.delete("/api/mail/rules/{rule_id}")
+def mail_rule_delete(rule_id: int) -> dict[str, Any]:
+    mail_store.delete_rule(rule_id)
+    return {"ok": True, "id": rule_id}
+
+
+@app.post("/api/mail/reclassify")
+def mail_reclassify(account_id: int | None = None) -> dict[str, Any]:
+    """Önbellekteki mailleri kural motorundan yeniden geçir (LLM yok, bedava).
+
+    Kategori kuralları değiştiğinde gerekiyor; elle seçilmiş kategorilere
+    dokunmuyor.
+    """
+    return mail_service.reclassify_cached(account_id=account_id)
 
 
 @app.post("/api/mail/messages/{message_id}/mark")
@@ -355,6 +479,129 @@ async def mail_summarize(message_id: int, force: bool = False) -> dict[str, Any]
 async def mail_categorize_batch(limit: int = 15, account_id: int | None = None) -> dict[str, Any]:
     """Kuralın kararsız kaldığı ('diger') mailleri modele sor."""
     return await mail_service.categorize_with_llm(limit=limit, account_id=account_id)
+
+
+# --- Faz 11: otomasyon ------------------------------------------------------
+
+
+def _clean_allowlist(raw: Any) -> list[str]:
+    """Girilenleri alan adına indir, tekrarları at, sırayı koru."""
+    seen: list[str] = []
+    for item in raw or []:
+        host = browser_actions.normalize_host(str(item))
+        if host and host not in seen:
+            seen.append(host)
+    return seen
+
+
+@app.get("/api/automations")
+def automations() -> dict[str, Any]:
+    return {"automations": automation_store.list_automations(),
+            "browser": {"running": browser.running, "streaming": browser.streaming}}
+
+
+@app.post("/api/automations")
+def automation_create(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    name = str(payload.get("name") or "").strip() or "Yeni otomasyon"
+    return automation_store.create_automation(
+        name,
+        goal=str(payload.get("goal") or ""),
+        start_url=str(payload.get("start_url") or ""),
+        allowlist=_clean_allowlist(payload.get("allowlist")),
+    )
+
+
+@app.get("/api/automations/{automation_id}")
+def automation_detail(automation_id: int) -> dict[str, Any]:
+    automation = automation_store.get_automation(automation_id)
+    if automation is None:
+        raise HTTPException(status_code=404, detail="Otomasyon bulunamadı.")
+    automation["steps"] = automation_store.list_steps(automation_id)
+    return automation
+
+
+@app.patch("/api/automations/{automation_id}")
+def automation_update(automation_id: int, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    fields = dict(payload)
+    if "allowlist" in fields:
+        cleaned = _clean_allowlist(fields["allowlist"])
+        if not cleaned:
+            # Boş liste "her yer serbest" DEĞİL, "hiçbir yer" demek: kaydetmek
+            # otomasyonu sessizce çalışamaz hâle getirir. Kullanıcı satırları
+            # silip yeniden yazarken bunu farkında olmadan yapabiliyor, sonra
+            # da "izinler silindi" diye karşılaşıyor. Sessizce kabul etmek
+            # yerine reddediyoruz.
+            raise HTTPException(
+                status_code=400,
+                detail="En az bir izinli site gerekli — boş liste otomasyonu çalışamaz hâle getirir.",
+            )
+        fields["allowlist"] = cleaned
+    updated = automation_store.update_automation(automation_id, **fields)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Otomasyon bulunamadı.")
+    return updated
+
+
+@app.delete("/api/automations/{automation_id}")
+def automation_delete(automation_id: int) -> dict[str, Any]:
+    automation_store.delete_automation(automation_id)
+    return {"ok": True, "id": automation_id}
+
+
+@app.post("/api/automations/{automation_id}/steps")
+def automation_step_add(automation_id: int, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Elle adım ekle (planlayıcı dışında)."""
+    intent = str(payload.get("intent") or "").strip()
+    if not intent:
+        raise HTTPException(status_code=400, detail="Adım metni boş olamaz.")
+    return automation_store.add_step(
+        automation_id, intent,
+        kind=str(payload.get("kind") or "islem"),
+        position=payload.get("position"),
+    )
+
+
+@app.post("/api/automations/steps/{step_id}/move")
+def automation_step_move(step_id: int, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Adımı bir yukarı (-1) ya da aşağı (+1) taşı."""
+    return {"steps": automation_store.move_step(step_id, int(payload.get("delta") or 0))}
+
+
+@app.patch("/api/automations/steps/{step_id}")
+def automation_step_update(step_id: int, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Adımı düzenle.
+
+    `intent` değişirse kayıtlı `action` DÜŞÜRÜLÜR: cümle artık başka bir şey
+    anlatıyor, eski somut eylem ona ait değil. Yoksa kullanıcı adımı
+    düzeltiyor ama ajan eskisini yapmaya devam ederdi.
+    """
+    fields = dict(payload)
+    if "intent" in fields:
+        fields["action"] = None
+        fields["status"] = "bekliyor"
+        fields["last_error"] = None
+    automation_store.update_step(step_id, **fields)
+    return {"ok": True, "id": step_id}
+
+
+@app.delete("/api/automations/steps/{step_id}")
+def automation_step_delete(step_id: int) -> dict[str, Any]:
+    automation_store.delete_step(step_id)
+    return {"ok": True, "id": step_id}
+
+
+@app.post("/api/browser/login")
+async def browser_login() -> dict[str, Any]:
+    """Görünür bir pencere aç: kullanıcı Gmail'e bir kez giriş yapsın.
+
+    Headless Chrome'da Google girişi çoğu zaman engelleniyor ("bu tarayıcı
+    güvenli olmayabilir"). Bu yüzden giriş, AYNI profille açılan gerçek bir
+    pencerede yapılıyor; sonrasında otomasyon o oturumu kullanıyor.
+    """
+    await browser.stop()
+    await browser.start(headless=False)
+    await browser.send("Page.navigate", {"url": "https://accounts.google.com/"})
+    return {"ok": True, "detail": "Giriş penceresi açıldı. Girişi yapıp pencereyi kapatabilirsin."}
 
 
 # --- Faz 8: takvim ----------------------------------------------------------
@@ -531,6 +778,319 @@ def notifications_test() -> dict[str, Any]:
         replace_key="ull-bot-test",
     )
     return {"ok": result.ok, "backend": result.backend, "detail": result.detail}
+
+
+@app.websocket("/ws/browser")
+async def ws_browser(websocket: WebSocket) -> None:
+    """Otomasyon görünümünün tek kanalı.
+
+    Sunucu → UI: `frame` (canlı ekran), `steps`, `step_update`, `state`,
+    `approval_request`, `log`, `error`.
+    UI → sunucu: `start`, `plan`, `run`, `stop`, `input`, `approval_response`.
+
+    Girdi iletimi (`input`) kullanıcının canlı görüntü üzerinde kendi eliyle
+    tıklayıp yazabilmesi için: giriş yapmak, bir menüyü açmak ya da ajanın
+    takıldığı yerden devam ettirmek gerekiyor.
+    """
+    await websocket.accept()
+    send_lock = asyncio.Lock()
+    stop_flag = {"value": False}
+    pending_approval: dict[str, asyncio.Future[bool]] = {}
+
+    async def emit(event: dict[str, Any]) -> None:
+        try:
+            async with send_lock:
+                await websocket.send_json(event)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
+    async def on_frame(data: str) -> None:
+        await emit({"type": "frame", "data": data})
+
+    async def on_closed() -> None:
+        # Kullanıcı gerçek pencereyi kapattı: panel son kareyi göstermeye
+        # devam etmesin, "kapalı" desin.
+        await emit({"type": "state", "running": False, "closed": True})
+
+    browser.on_frame(on_frame)
+    browser.on_closed(on_closed)
+
+    async def approve(action_desc: str, step_intent: str) -> bool:
+        request_id = uuid.uuid4().hex
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        pending_approval[request_id] = future
+        await emit({"type": "approval_request", "id": request_id,
+                    "action": action_desc, "intent": step_intent})
+        try:
+            return await asyncio.wait_for(future, timeout=settings.approval_timeout_seconds)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            pending_approval.pop(request_id, None)
+
+    async def prepare(automation: dict[str, Any]) -> None:
+        """Tarayıcıyı ve doğru sekmeyi otomasyon için hazırla.
+
+        Kullanıcı "sayfa açık değilse bile sayfayı açsın" dedi: eskiden
+        planlama, tarayıcının önceden açılmış olmasını bekliyordu ve
+        "Önce tarayıcıyı aç" diyordu. Ayrıca birden fazla sekme açık
+        olabiliyor; `open_for` aynı siteden bir sekme varsa ona geçiyor,
+        yoksa yeni sekme açıyor.
+        """
+        await browser.start(headless=False)
+        # Bayrağa BAKMIYORUZ: `start_stream` zaten "zaten açık mı, döngü
+        # canlı mı" diye kontrol ediyor. Dışarıda ayrıca bayrağa bakmak,
+        # döngü ölmüşken bayrak açık kaldığında aynanın hiç açılmamasına
+        # yol açıyordu.
+        await browser.start_stream()
+        await browser.open_for(automation.get("start_url") or "")
+        await emit({"type": "tabs", "tabs": await browser.tabs()})
+
+    async def run_automation(automation_id: int, step_by_step: bool,
+                             *, only: int | None = None, start_at: int = 0) -> None:
+        automation = automation_store.get_automation(automation_id)
+        if automation is None:
+            await emit({"type": "error", "message": "Otomasyon bulunamadı."})
+            return
+        steps = automation_store.list_steps(automation_id)
+        if not steps:
+            await emit({"type": "error", "message": "Önce bir plan çıkar."})
+            return
+        # Kullanıcı bir adımı tek başına deneyebilsin ya da düzelttiği
+        # adımdan devam edebilsin: "bir adım geri gidip revize edip devam
+        # ettirebilelim" (kullanıcının isteği).
+        if only is not None:
+            steps = [step for step in steps if step["id"] == int(only)]
+        elif start_at:
+            steps = [step for step in steps if step["position"] >= start_at]
+
+        allowlist = automation["allowlist"]
+        if not allowlist:
+            await emit({"type": "error", "message": (
+                "Bu otomasyonun izinli sitesi yok. ⚙ ayarlarından en az bir site ekle "
+                "(örn. mail.google.com) — ajan yalnızca listedeki sitelerde çalışabilir."
+            )})
+            await emit({"type": "run_done", "status": "hata"})
+            return
+        await prepare(automation)
+        run_id = automation_store.start_run(automation_id)
+        log: list[dict[str, Any]] = []
+        status = "tamam"
+
+        for step in steps:
+            if stop_flag["value"]:
+                status = "yarida"
+                break
+            automation_store.update_step(step["id"], status="calisiyor", last_error=None)
+            await emit({"type": "step_update", "id": step["id"], "status": "calisiyor"})
+            try:
+                # İlerleme günlüğü: kullanıcı "neler yaptığını, nelerde
+                # uğraştığını görebilelim" dedi. Takıldığında hangi aşamada
+                # takıldığı da buradan anlaşılıyor.
+                await emit({"type": "log", "text": f"Sayfa okunuyor — {step['intent'][:60]}"})
+                action, state, asked_model = await browser_agent.decide(
+                    step, browser, allowlist=allowlist,
+                    session_id=f"otomasyon-{automation_id}",
+                    on_progress=lambda text: emit({"type": "log", "text": text}),
+                )
+                await emit({"type": "log", "text": (
+                    f"Eylem: {action.describe()}"
+                    + (" (model soruldu)" if asked_model else " (kayıtlı eylem)")
+                )})
+                # Onay: ilk çalıştırmada her adım, sonrasında yalnızca geri
+                # alınamaz eylemler (kullanıcının kararı).
+                if step_by_step or action.is_irreversible(state):
+                    if not await approve(action.describe(), step["intent"]):
+                        automation_store.update_step(step["id"], status="atlandi")
+                        await emit({"type": "step_update", "id": step["id"], "status": "atlandi"})
+                        log.append({"step": step["intent"], "sonuc": "kullanıcı atladı"})
+                        continue
+
+                detail = await browser_actions.run_action(browser, action, allowlist=allowlist)
+                await emit({"type": "log", "text": f"Sonuç: {detail[:120]}"})
+                automation_store.update_step(
+                    step["id"], status="tamam", action=step.get("action"), last_error=None
+                )
+                await emit({"type": "step_update", "id": step["id"], "status": "tamam",
+                            "detail": detail, "model": asked_model})
+                log.append({"step": step["intent"], "eylem": action.describe(),
+                            "sonuc": detail[:400], "model": asked_model})
+            except Exception as exc:
+                message = str(exc)
+                if isinstance(exc, browser_session.BlockedHost):
+                    # Beyaz liste engeli: kullanıcıya tek tıkla izin verme
+                    # yolu sun. Ayarları açıp elle yazmak akışı kopartıyordu.
+                    await emit({"type": "blocked", "url": exc.url,
+                                "host": exc.host, "allowlist": exc.allowlist})
+                await emit({"type": "log", "text": f"HATA: {message[:160]}", "level": "err"})
+                automation_store.update_step(step["id"], status="hata", last_error=message[:400])
+                await emit({"type": "step_update", "id": step["id"], "status": "hata",
+                            "detail": message})
+                log.append({"step": step["intent"], "hata": message[:400]})
+                status = "hata"
+                break
+
+        automation_store.finish_run(run_id, status, log)
+        automation_store.update_automation(
+            automation_id, last_run_at=now_utc_iso(), last_status=status
+        )
+        # Bitişte adımların SON hâli de gidiyor: kullanıcı "bitirdiğini
+        # fark etmedim, sayfa yenilenmedi" dedi — liste ekranda eski
+        # durumuyla kalıyordu.
+        await emit({
+            "type": "run_done",
+            "status": status,
+            "steps": automation_store.list_steps(automation_id),
+            "done": sum(1 for row in log if "sonuc" in row or "eylem" in row),
+            "total": len(steps),
+        })
+
+    task: asyncio.Task | None = None
+    try:
+        while True:
+            data = await websocket.receive_json()
+            kind = data.get("type")
+
+            if kind == "approval_response":
+                future = pending_approval.get(str(data.get("id")))
+                if future is not None and not future.done():
+                    future.set_result(bool(data.get("approved")))
+                continue
+
+            if kind == "start":
+                # Beyaz liste İSTEMCİDEN GELMEZ, kayıttan okunur.
+                #
+                # Güvenlik kararını istemciye sormak baştan yanlıştı: bozuk
+                # bir istemci boş liste gönderip her şeyi kilitliyor (canlı
+                # yaşandı — "mail.google.com izinli değil" derken kayıtta
+                # izinliydi), kötü niyetli biri ise sonsuz geniş liste
+                # gönderip sınırı tamamen kaldırabilirdi.
+                automation = automation_store.get_automation(
+                    int(data.get("automation_id") or 0)
+                ) or {}
+                allowlist = automation.get("allowlist") or []
+                # Gerçek pencere: kullanıcı "tam çalışan bir tarayıcı" istedi.
+                # Görünür pencerede hem kendisi gezinebiliyor hem de Google
+                # girişi engellenmiyor; ekran akışı yine panele düşüyor.
+                await browser.start(headless=bool(data.get("headless", False)))
+                # Başlangıç adresi ve sekme seçimi `prepare` içinde: aynı
+                # siteden sekme varsa ona geçiyor, yoksa açıyor.
+                await prepare(automation)
+                url = str(data.get("url") or "")
+                if url and browser_actions.host_allowed(url, allowlist):
+                    await browser.send("Page.navigate", {"url": url})
+                elif url:
+                    from urllib.parse import urlparse as _parse
+                    await emit({
+                        "type": "blocked",
+                        "url": url,
+                        "host": (_parse(url).hostname or ""),
+                        "allowlist": allowlist,
+                    })
+                await emit({"type": "state", "running": True})
+                continue
+
+            if kind == "stop":
+                stop_flag["value"] = True
+                if task and not task.done():
+                    task.cancel()
+                await emit({"type": "state", "running": browser.running, "stopped": True})
+                continue
+
+            if kind == "tabs":
+                await emit({"type": "tabs", "tabs": await browser.tabs()})
+                continue
+
+            if kind == "focus_tab":
+                await browser.focus_tab(str(data.get("target_id") or ""))
+                await emit({"type": "tabs", "tabs": await browser.tabs()})
+                continue
+
+            if kind == "allow_host":
+                # Engellenen adresi kullanıcı onayıyla listeye ekle.
+                #
+                # Güvenlik sınırı korunuyor: ekleyen İNSAN, ajan değil.
+                # Eskiden kullanıcı her engelde ayarları açıp elle yazmak
+                # zorundaydı ve akış kopuyordu.
+                automation_id = int(data.get("automation_id") or 0)
+                automation = automation_store.get_automation(automation_id) or {}
+                host = str(data.get("host") or "").strip().casefold()
+                if host:
+                    allowlist = list(automation.get("allowlist") or [])
+                    if host not in allowlist:
+                        allowlist.append(host)
+                    automation_store.update_automation(automation_id, allowlist=allowlist)
+                    await emit({"type": "allowlist", "allowlist": allowlist})
+                continue
+
+            if kind == "input":
+                # Kullanıcının canlı görüntü üzerindeki kendi tıklaması/yazması.
+                await _forward_input(data)
+                continue
+
+            if kind == "plan":
+                automation_id = int(data.get("automation_id"))
+                automation = automation_store.get_automation(automation_id) or {}
+                goal = str(data.get("goal") or automation.get("goal") or "")
+                try:
+                    await prepare(automation)
+                    state = await browser.state()
+                    steps = await browser_agent.plan(goal, state,
+                                                     session_id=f"otomasyon-{automation_id}")
+                    automation_store.update_automation(automation_id, goal=goal)
+                    saved = automation_store.replace_steps(automation_id, steps)
+                    await emit({"type": "steps", "steps": saved})
+                except Exception as exc:
+                    await emit({"type": "error", "message": str(exc)})
+                continue
+
+            if kind == "run":
+                stop_flag["value"] = False
+                automation_id = int(data.get("automation_id"))
+                automation_store.reset_steps(automation_id)
+                await emit({"type": "steps",
+                            "steps": automation_store.list_steps(automation_id)})
+                async def guarded(aid: int = automation_id,
+                                  step_by_step: bool = bool(data.get("step_by_step", True)),
+                                  only: int | None = data.get("only_step"),
+                                  start_at: int = int(data.get("from_step") or 0)) -> None:
+                    # Çalıştırma bir istisnayla düşerse UI sonsuza kadar
+                    # "çalışıyor" görünüyordu; bitiş her hâlükârda bildirilir.
+                    try:
+                        await run_automation(aid, step_by_step, only=only, start_at=start_at)
+                    except asyncio.CancelledError:
+                        await emit({"type": "run_done", "status": "durduruldu"})
+                    except Exception as exc:
+                        await emit({"type": "error", "message": f"Çalıştırma düştü: {exc}"})
+                        await emit({"type": "run_done", "status": "hata"})
+
+                task = asyncio.create_task(guarded())
+                continue
+    except WebSocketDisconnect:
+        pass
+    finally:
+        browser.off_frame(on_frame)
+        browser.off_closed(on_closed)
+        if task and not task.done():
+            task.cancel()
+
+
+async def _forward_input(data: dict[str, Any]) -> None:
+    """UI'daki canlı görüntüden gelen fare/klavye olayını tarayıcıya ilet."""
+    kind = str(data.get("event") or "")
+    if kind == "click":
+        for phase in ("mousePressed", "mouseReleased"):
+            await browser.send("Input.dispatchMouseEvent", {
+                "type": phase, "x": int(data.get("x", 0)), "y": int(data.get("y", 0)),
+                "button": "left", "clickCount": 1,
+            })
+    elif kind == "text":
+        for char in str(data.get("text") or ""):
+            await browser.send("Input.dispatchKeyEvent", {"type": "char", "text": char})
+    elif kind == "key":
+        await browser_actions._press(browser, str(data.get("key") or ""))
+    elif kind == "scroll":
+        await browser.evaluate(f"window.scrollBy(0, {int(data.get('dy', 0))})")
 
 
 @app.websocket("/ws/chat")

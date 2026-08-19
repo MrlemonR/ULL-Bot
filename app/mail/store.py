@@ -242,6 +242,7 @@ def list_messages(
     limit: int = 100,
     offset: int = 0,
     include_hidden: bool = False,
+    exclude_categories: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Liste görünümünün tek sorgusu. Gövde taşımaz (bkz. `LIST_COLUMNS`).
 
@@ -264,6 +265,11 @@ def list_messages(
         placeholders = ", ".join("?" for _ in HIDDEN_FROM_ALL)
         clauses.append(f"(category IS NULL OR category NOT IN ({placeholders}))")
         params.extend(sorted(HIDDEN_FROM_ALL))
+    if exclude_categories:
+        # "Öncelikli" görünümü: reklam/diğer gibi gürültülü kategoriler dışarıda.
+        placeholders = ", ".join("?" for _ in exclude_categories)
+        clauses.append(f"(category IS NULL OR category NOT IN ({placeholders}))")
+        params.extend(exclude_categories)
     if unread_only:
         clauses.append("seen = 0")
     if flagged_only:
@@ -363,6 +369,24 @@ def set_flags(message_id: int, *, seen: bool | None = None, flagged: bool | None
         conn.commit()
 
 
+def list_messages_for_reclassify(account_id: int | None = None) -> list[dict[str, Any]]:
+    """Kural motorundan yeniden geçirilecek satırlar (bkz. `service.reclassify_cached`).
+
+    Liste görünümünün alan listesi yetmiyor: karar için `body_text` ve
+    `ics_payload` da lazım.
+    """
+    query = (
+        "SELECT id, folder, message_id, from_name, from_addr, subject, snippet, "
+        "body_text, ics_payload, category, category_source FROM mail_messages"
+    )
+    params: list[Any] = []
+    if account_id is not None:
+        query += " WHERE account_id = ?"
+        params.append(account_id)
+    with get_connection() as conn:
+        return [dict(row) for row in conn.execute(query, params)]
+
+
 def set_category(message_id: int, category: str, *, source: str = "user", reason: str = "") -> None:
     with get_connection() as conn:
         conn.execute(
@@ -405,3 +429,41 @@ def uncategorized(limit: int = 20, account_id: int | None = None) -> list[dict[s
             params,
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+# --- özet kuralları ---------------------------------------------------------
+
+
+def list_rules(only_enabled: bool = False) -> list[dict[str, Any]]:
+    query = "SELECT id, text, enabled, created_at FROM mail_rules"
+    if only_enabled:
+        query += " WHERE enabled = 1"
+    query += " ORDER BY id"
+    with get_connection() as conn:
+        return [dict(row) for row in conn.execute(query)]
+
+
+def add_rule(text: str) -> dict[str, Any]:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO mail_rules (text, enabled, created_at) VALUES (?, 1, ?)",
+            (text.strip(), now_utc_iso()),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, text, enabled, created_at FROM mail_rules WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return dict(row)
+
+
+def set_rule_enabled(rule_id: int, enabled: bool) -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE mail_rules SET enabled = ? WHERE id = ?", (int(enabled), rule_id))
+        conn.commit()
+
+
+def delete_rule(rule_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM mail_rules WHERE id = ?", (rule_id,))
+        conn.commit()

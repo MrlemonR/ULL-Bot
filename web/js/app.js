@@ -7,20 +7,25 @@
 
 import { api } from "./api.js";
 import { ChatCore, ChatView } from "./chat.js";
+import { AutomationView } from "./automation.js";
 import { CalendarView } from "./calendar.js";
 import { MailView } from "./mail.js";
 import { HistoryView, QuotaView, SettingsView } from "./panels.js";
 import {
-  ICONS, closeModal, escapeHtml, interceptExternalLinks, isModalOpen, openModal, toast,
+  ICONS, closeModal, escapeHtml, interceptExternalLinks, isModalOpen, markdown, openModal, toast,
 } from "./util.js";
 
+// Başlıklar köşeli parantez içinde: kullanıcının istediği terminal havası.
+// Süs burada bitiyor — alt satırdaki açıklama normal cümle olarak kalıyor,
+// yoksa arayüz okunmaz hâle gelir ("abartmadan").
 const VIEW_META = {
-  chat: { title: "Sohbet", sub: "Ajanla konuş — dosyalar, komutlar, mail ve takvim." },
-  mail: { title: "Mail", sub: "IMAP kutun, kategorilere ayrılmış. Yandaki kutudan sor." },
-  calendar: { title: "Takvim", sub: "Uygulamanın kendi takvimi. Hatırlatmalar masaüstü bildirimi olarak gelir." },
-  quota: { title: "Kota", sub: "Sağlayıcı limitleri ve son 14 günün kullanımı." },
-  history: { title: "Geçmiş", sub: "Kaydedilmiş oturumlar ve tüm mesajlarda arama." },
-  settings: { title: "Ayarlar", sub: "Mail hesapları, bildirimler, kalıcı hafıza." },
+  chat: { title: "[ SOHBET ]", sub: "Ajanla konuş — dosyalar, komutlar, mail ve takvim." },
+  mail: { title: "[ MAIL ]", sub: "IMAP kutun, kategorilere ayrılmış. Yandaki kutudan sor." },
+  automation: { title: "[ OTOMASYON ]", sub: "Tarayıcıda iş yaptır: planla, adımları düzelt, çalıştır." },
+  calendar: { title: "[ TAKVİM ]", sub: "Uygulamanın kendi takvimi. Hatırlatmalar masaüstü bildirimi olarak gelir." },
+  quota: { title: "[ KOTA ]", sub: "Sağlayıcı limitleri ve son 14 günün kullanımı." },
+  history: { title: "[ GEÇMİŞ ]", sub: "Kaydedilmiş oturumlar ve tüm mesajlarda arama." },
+  settings: { title: "[ AYARLAR ]", sub: "Mail hesapları, bildirimler, kalıcı hafıza." },
 };
 
 const CHAT_EMPTY = `
@@ -44,6 +49,7 @@ class App {
 
     this.mail = new MailView(this);
     this.calendar = new CalendarView(this);
+    this.automation = new AutomationView(this);
     this.quota = new QuotaView(this);
     this.history = new HistoryView(this);
     this.settings = new SettingsView(this);
@@ -104,6 +110,10 @@ class App {
     document.querySelectorAll(".rail-btn[data-view]").forEach((button) => {
       button.addEventListener("click", () => this.show(button.dataset.view));
     });
+    // Geçmiş sol şeritte değil, üst barda: sohbetin bir parçası, ayrı bir
+    // bölüm değil (kullanıcı isteği).
+    document.getElementById("chip-history")
+      .addEventListener("click", () => this.show("history"));
   }
 
   show(name) {
@@ -117,11 +127,16 @@ class App {
       section.classList.toggle("is-active", section.dataset.view === name);
     });
 
+    // Geçmiş düğmesi yalnızca Sohbet'te (ve Geçmiş'in kendisinde) görünür:
+    // maildeyken sohbet geçmişinin orada işi yok.
+    document.getElementById("chip-history").hidden = !["chat", "history"].includes(name);
+
     document.getElementById("view-title").textContent = VIEW_META[name].title;
     document.getElementById("view-sub").textContent = VIEW_META[name].sub;
 
     const target = { mail: this.mail, calendar: this.calendar, quota: this.quota,
-                     history: this.history, settings: this.settings }[name];
+                     history: this.history, settings: this.settings,
+                     automation: this.automation }[name];
     if (target) target.activate();
 
     if (name === "chat") {
@@ -261,7 +276,11 @@ class App {
       else if (message.role === "assistant" && message.content) {
         this.chat.ensureStream();
         this.chat.buffer = message.content;
-        this.chat.streamBody.innerHTML = escapeHtml(message.content).replace(/\n/g, "<br>");
+        // Canlı akışla AYNI render: `markdown()`. Eskiden burada
+        // `escapeHtml(...).replace(/\n/g,"<br>")` vardı ve geçmişten açılan
+        // bir konuşma ham markdown olarak görünüyordu — tablolar `| a | b |`
+        // satırları, başlıklar `###`, bağlantılar `[x](url)` diye.
+        this.chat.streamBody.innerHTML = markdown(message.content);
         this.chat.finishStream();
       }
     }
@@ -394,7 +413,7 @@ class App {
         if (!modal.querySelector("[data-approve], [data-go]")) closeModal();
       }
       if ((event.ctrlKey || event.metaKey) && event.key >= "1" && event.key <= "6") {
-        const order = ["chat", "mail", "calendar", "quota", "history", "settings"];
+        const order = ["chat", "mail", "automation", "calendar", "quota", "history", "settings"];
         event.preventDefault();
         this.show(order[Number(event.key) - 1]);
       }

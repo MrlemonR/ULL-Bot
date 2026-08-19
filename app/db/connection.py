@@ -1,7 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from app.settings import settings
 
@@ -16,6 +16,11 @@ MIGRATIONS: tuple[tuple[str, str, str], ...] = (
     # Faz 8b'de Google OAuth denendi ve kaldırıldı (bkz. DECISIONS.md);
     # sütun duruyor çünkü SQLite'ta sütun silmek tabloyu yeniden yazmayı
     # gerektiriyor ve bu alanın bir maliyeti yok. Hep 'password'.
+    (
+        "automation_steps",
+        "kind",
+        "ALTER TABLE automation_steps ADD COLUMN kind TEXT DEFAULT 'islem'",
+    ),
     (
         "mail_accounts",
         "auth_type",
@@ -33,11 +38,25 @@ def init_db() -> None:
         _apply_migrations(conn)
 
 
+# Sütun değil VERİ göçleri: bir kategori yeniden adlandırıldığında eski
+# satırlar da taşınmalı, yoksa kullanıcının kutusunda artık UI'da karşılığı
+# olmayan bir kategori kalır ve o mailler hiçbir sekmede görünmez.
+DATA_MIGRATIONS: tuple[tuple[str, tuple[Any, ...]], ...] = (
+    # 2026-08-18: `bulten` → `reklam` (bkz. app/mail/classify.py RENAMED).
+    ("UPDATE mail_messages SET category = 'reklam' WHERE category = 'bulten'", ()),
+)
+
+
 def _apply_migrations(conn: sqlite3.Connection) -> None:
     for table, column, statement in MIGRATIONS:
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             conn.execute(statement)
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for statement, params in DATA_MIGRATIONS:
+        if "mail_messages" in statement and "mail_messages" not in tables:
+            continue
+        conn.execute(statement, params)
     conn.commit()
 
 

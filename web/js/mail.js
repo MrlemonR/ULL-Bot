@@ -8,16 +8,25 @@ import { api } from "./api.js";
 import { mountMailBody } from "./mailbody.js";
 import {
   ICONS, closeModal, colorFor, el, emptyState, escapeHtml, formatDate,
-  formatRelative, initials, openExternal, openModal, toast,
+  formatRelative, initials, markdown, openExternal, openModal, toast,
 } from "./util.js";
 
-const CATEGORY_ORDER = ["toplanti", "is", "fatura", "kisisel", "bildirim", "bulten", "diger"];
-// Spam listede DEĞİL: "Tümü"ye karışmıyor ve şeridin en altında, diğer
-// kategorilerden ayrı bir bölümde duruyor (kullanıcının isteği).
+// Sıra kullanıcının verdiği önem sırasıyla: kod ve sipariş önde, reklam
+// arkada (bkz. app/mail/classify.py CATEGORIES).
+const CATEGORY_ORDER = [
+  "kod", "genel", "bildirim", "reklam", "toplanti", "fatura", "is", "kisisel", "diger",
+];
+// Spam listede DEĞİL: "Tümü"ye karışmıyor ve şeridin sonunda, diğer
+// kategorilerden ayrı duruyor (kullanıcının isteği).
 const EXILED = ["spam"];
+// "Öncelikli" görünümünden düşen kategoriler. Kullanıcı "Tümü direkt seçili
+// gelmesin, önemli mailler önde gelsin" dedi: açılışta reklam ve kararsızlar
+// listeye hiç karışmıyor, tek tıkla ulaşılabiliyorlar.
+const NOISY = ["reklam", "diger"];
 const CATEGORY_DOT = {
-  toplanti: "#8b6bff", is: "#5b8cff", fatura: "#eab24a", bulten: "#4fb6e0",
-  bildirim: "#7a879d", kisisel: "#34c98a", diger: "#4a5468", spam: "#f4626f",
+  kod: "#f4626f", genel: "#34c98a", bildirim: "#4fb6e0", reklam: "#7a879d",
+  toplanti: "#8b6bff", fatura: "#eab24a", is: "#5b8cff",
+  kisisel: "#34c98a", diger: "#4a5468", spam: "#f4626f",
 };
 
 export class MailView {
@@ -26,12 +35,17 @@ export class MailView {
     this.messages = [];
     this.counts = { total: 0, unread: 0, categories: [], folders: [] };
     this.selected = null;
-    this.filter = { view: "all", category: null, unread: false, flagged: false, q: "" };
+    // Açılış görünümü "Tümü" değil "Öncelikli" (kullanıcı isteği).
+    this.filter = { view: "priority", category: null, unread: false, flagged: false, q: "" };
     this.loaded = false;
+    // Checkbox ile seçilenler. Doluyken üst bar kategoriler yerine toplu
+    // işlemleri gösteriyor.
+    this.checked = new Set();
 
     this.listEl = document.getElementById("mail-list");
     this.detailEl = document.getElementById("mail-detail");
     this.filtersEl = document.getElementById("mail-filters");
+    this.bulkEl = document.getElementById("mail-bulk");
     this.layoutEl = document.querySelector(".mail-layout");
 
     document.getElementById("mail-sync").addEventListener("click", () => this.sync());
@@ -65,6 +79,7 @@ export class MailView {
         flagged: this.filter.flagged,
         q: this.filter.q,
         limit: 200,
+        exclude: this.filter.view === "priority" ? NOISY.join(",") : undefined,
       });
       this.messages = data.messages || [];
       this.counts = data.counts || this.counts;
@@ -135,40 +150,33 @@ export class MailView {
     const categories = new Map((this.counts.categories || []).map((row) => [row.category, row]));
     const chunks = [];
 
-    const item = (key, label, active, count, dot) => `
-      <button class="filter ${active ? "is-active" : ""}" data-filter="${key}">
+    const item = (key, label, count, dot) => `
+      <button class="tab ${this.filter.view === key ? "is-active" : ""}" data-filter="${key}">
         ${dot ? `<span class="dot" style="background:${dot}"></span>` : ""}
         <span>${escapeHtml(label)}</span>
         ${count ? `<span class="n">${count}</span>` : ""}
       </button>`;
 
+    // Gürültülü kategoriler dışarıda kaldığı için "Öncelikli"nin sayısı
+    // toplamdan farklı — kullanıcı neyi görmediğini bilsin diye sayıyoruz.
+    const noisy = NOISY.reduce((sum, key) => sum + (categories.get(key)?.total || 0), 0);
     chunks.push(
-      item("all", "Tümü", this.filter.view === "all", this.counts.total, "#4a5468"),
-      item("unread", "Okunmamış", this.filter.view === "unread", this.counts.unread, "#5b8cff"),
-      item("flagged", "Yıldızlı", this.filter.view === "flagged", 0, "#eab24a")
+      item("priority", "Öncelikli", Math.max(0, (this.counts.total || 0) - noisy), "#34c98a"),
+      item("all", "Tümü", this.counts.total, "#4a5468"),
+      item("unread", "Okunmamış", this.counts.unread, "#5b8cff"),
+      item("flagged", "Yıldızlı", 0, "#eab24a"),
+      '<span class="tab-sep"></span>'
     );
 
-    chunks.push('<div class="fgroup">Kategoriler</div>');
     for (const key of CATEGORY_ORDER) {
       const row = categories.get(key);
-      if (!row && key !== "toplanti") continue;
-      const label = this.app.categories[key] || key;
-      chunks.push(
-        item(`cat:${key}`, label, this.filter.view === `cat:${key}`, row?.total || 0, CATEGORY_DOT[key])
-      );
+      if (!row) continue;
+      chunks.push(item(`cat:${key}`, this.app.categories[key] || key, row.total, CATEGORY_DOT[key]));
     }
-
-    // Sürgün kategoriler en altta, ayrı bir bölümde. "Tümü"ye hiç
-    // karışmadıkları için burada olmaları tek görünme yolları.
-    const exiled = EXILED.filter((key) => categories.get(key));
-    if (exiled.length) {
-      chunks.push('<div class="fgroup fgroup-exile">Ayrılanlar</div>');
-      for (const key of exiled) {
-        const row = categories.get(key);
-        chunks.push(
-          item(`cat:${key}`, this.app.categories[key] || key,
-               this.filter.view === `cat:${key}`, row.total, CATEGORY_DOT[key])
-        );
+    for (const key of EXILED) {
+      const row = categories.get(key);
+      if (row) {
+        chunks.push(item(`cat:${key}`, this.app.categories[key] || key, row.total, CATEGORY_DOT[key]));
       }
     }
 
@@ -183,7 +191,108 @@ export class MailView {
     this.filter.category = key.startsWith("cat:") ? key.slice(4) : null;
     this.filter.unread = key === "unread";
     this.filter.flagged = key === "flagged";
+    this.clearSelection();
     this.load();
+  }
+
+  /* --------------------------------------------------- toplu seçim */
+
+  clearSelection() {
+    this.checked.clear();
+    this.renderBulk();
+  }
+
+  toggleCheck(id, on) {
+    if (on) this.checked.add(id);
+    else this.checked.delete(id);
+    this.renderBulk();
+  }
+
+  /** Seçim varsa kategoriler gizlenir, yerine toplu işlemler gelir. */
+  renderBulk() {
+    const count = this.checked.size;
+    this.filtersEl.hidden = count > 0;
+    this.bulkEl.hidden = count === 0;
+    if (!count) {
+      this.bulkEl.innerHTML = "";
+      return;
+    }
+    this.bulkEl.innerHTML = `
+      <span class="bulk-count">[ ${count} seçili ]</span>
+      <button class="btn btn-ghost btn-sm" data-bulk="read">Okundu yap</button>
+      <button class="btn btn-ghost btn-sm" data-bulk="unread">Okunmadı yap</button>
+      <button class="btn btn-ghost btn-sm" data-bulk="star">Yıldızla</button>
+      <button class="btn btn-ghost btn-sm" data-bulk="category">Kategori değiştir</button>
+      <button class="btn btn-danger btn-sm" data-bulk="trash">Sil</button>
+      <span class="bulk-sep"></span>
+      <button class="btn btn-ghost btn-sm" data-bulk="all-read">Tümünü okundu yap</button>
+      <button class="btn btn-ghost btn-sm" data-bulk="none">Seçimi bırak</button>`;
+    this.bulkEl.querySelectorAll("[data-bulk]").forEach((button) => {
+      button.addEventListener("click", () => this.runBulk(button.dataset.bulk));
+    });
+  }
+
+  async runBulk(action) {
+    if (action === "none") {
+      this.clearSelection();
+      this.renderList();
+      return;
+    }
+    if (action === "category") {
+      this.bulkCategoryDialog();
+      return;
+    }
+
+    // "Tümünü okundu yap" seçime bakmaz: listedeki okunmamışların hepsi.
+    const ids = action === "all-read"
+      ? this.messages.filter((message) => !message.seen).map((message) => message.id)
+      : [...this.checked];
+    if (!ids.length) {
+      toast("Yapılacak bir şey yok", "Okunmamış mail kalmamış.", "");
+      return;
+    }
+    if (action === "trash" && !window.confirm(`${ids.length} mail çöpe taşınacak. Emin misin?`)) {
+      return;
+    }
+
+    try {
+      const result = await api.mailBulk(ids, action === "all-read" ? "read" : action);
+      if (result.errors?.length) {
+        toast("Kısmen yapıldı", result.errors.join(" · "), "warn");
+      } else {
+        toast("Tamam", `${result.updated} mail güncellendi.`, "ok");
+      }
+      this.clearSelection();
+      await this.load();
+    } catch (error) {
+      toast("İşlem başarısız", error.message, "err");
+    }
+  }
+
+  bulkCategoryDialog() {
+    const buttons = Object.keys(this.app.categories || {})
+      .map((key) => `<button class="btn btn-ghost btn-sm" data-cat="${key}">
+        ${escapeHtml(this.app.categories[key])}</button>`)
+      .join("");
+    openModal(`
+      <div class="modal-head"><h3>[ KATEGORİ DEĞİŞTİR ]</h3>
+        <p>${this.checked.size} mail için yeni kategori seç.</p></div>
+      <div class="modal-body"><div class="chip-row">${buttons}</div></div>
+      <div class="modal-foot"><button class="btn btn-ghost" data-close>Vazgeç</button></div>`);
+    document.querySelector("[data-close]").addEventListener("click", closeModal);
+    document.querySelectorAll("[data-cat]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          const result = await api.mailBulk([...this.checked], "category", button.dataset.cat);
+          closeModal();
+          toast("Kategori güncellendi", `${result.updated} mail`, "ok");
+          this.clearSelection();
+          await this.load();
+        } catch (error) {
+          toast("Değiştirilemedi", error.message, "err");
+        }
+      });
+    });
   }
 
   /* ---------------------------------------------------------- liste */
@@ -215,6 +324,10 @@ export class MailView {
       const category = message.category || "diger";
       node.innerHTML = `
         <div class="mail-row">
+          <label class="mail-check" title="Seç">
+            <input type="checkbox" ${this.checked.has(message.id) ? "checked" : ""}>
+            <span class="box" aria-hidden="true"></span>
+          </label>
           ${message.seen ? "" : '<span class="unread-dot"></span>'}
           <span class="from">${escapeHtml(message.from_name || message.from_addr || "—")}</span>
           <span class="marks">
@@ -230,7 +343,15 @@ export class MailView {
           ${message.summary ? '<span class="cat cat-is">özetlendi</span>' : ""}
         </div>
         <div class="snip">${escapeHtml(message.snippet || "")}</div>`;
+      // Checkbox tıklaması maili AÇMAMALI — sadece seçer.
+      const box = node.querySelector(".mail-check input");
+      box.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.toggleCheck(message.id, box.checked);
+        node.classList.toggle("is-checked", box.checked);
+      });
       node.addEventListener("click", () => this.select(message.id));
+      if (this.checked.has(message.id)) node.classList.add("is-checked");
       this.listEl.appendChild(node);
     }
   }
@@ -272,8 +393,19 @@ export class MailView {
     const color = colorFor(message.from_addr || message.from_name || "?");
     const attachments = message.attachments || [];
 
+    const index = this.messages.findIndex((row) => row.id === message.id);
+    const hasPrev = index > 0;
+    const hasNext = index >= 0 && index < this.messages.length - 1;
+
     this.detailEl.innerHTML = `
       <div class="mail-detail-head">
+        <div class="mail-nav">
+          <span class="cat cat-${category}">${escapeHtml(this.app.categories[category] || category)}</span>
+          <span class="nav-gap"></span>
+          <button class="icon-btn" data-act="prev" title="Önceki mail" ${hasPrev ? "" : "disabled"}>&larr;</button>
+          <button class="icon-btn" data-act="next" title="Sonraki mail" ${hasNext ? "" : "disabled"}>&rarr;</button>
+          <button class="icon-btn" data-act="close" title="Kapat">&#10005;</button>
+        </div>
         <h2>${escapeHtml(message.subject || "(konusuz)")}</h2>
         <div class="mail-from">
           <div class="avatar" style="background:${color}">${escapeHtml(initials(message.from_name, message.from_addr))}</div>
@@ -282,8 +414,13 @@ export class MailView {
             <div class="addr">${escapeHtml(message.from_addr)} · ${escapeHtml(formatDate(message.date_ts))}</div>
           </div>
         </div>
-        <div class="mail-tools">
-          <span class="cat cat-${category}" style="padding:5px 10px">${escapeHtml(this.app.categories[category] || category)}</span>
+        ${message.code ? `
+        <div class="code-card">
+          <span class="code-label">[ KOD ]</span>
+          <code class="code-value">${escapeHtml(message.code)}</code>
+          <button class="btn btn-primary btn-sm" data-act="copycode">Kodu kopyala</button>
+        </div>` : ""}
+        <div class="mail-actions">
           <button class="btn btn-ghost btn-sm" data-act="summarize">✨ Özetle</button>
           <button class="btn btn-ghost btn-sm" data-act="calendar">📅 Takvime ekle</button>
           <button class="btn btn-ghost btn-sm" data-act="flag">${message.flagged ? "★ Yıldızı kaldır" : "☆ Yıldızla"}</button>
@@ -295,17 +432,20 @@ export class MailView {
             : '<button class="btn btn-ghost btn-sm" data-act="spam">🚫 Spam</button>'}
           <button class="btn btn-danger btn-sm" data-act="trash">Çöpe taşı</button>
         </div>
-        ${message.category_reason ? `<p class="muted" style="margin-top:9px">Neden bu kategori: ${escapeHtml(message.category_reason)}</p>` : ""}
+        ${message.category_reason ? `<p class="muted cat-reason">Neden bu kategori: ${escapeHtml(message.category_reason)}</p>` : ""}
+        <button class="head-toggle" data-act="headsize" title="Başlığı küçült/büyüt">
+          <span class="chev">▲</span>
+        </button>
       </div>
       ${message.summary ? `
         <div class="summary-card">
-          <h4>ÖZET${message.summary_model ? ` · ${escapeHtml(message.summary_model)}` : ""}</h4>
-          <div>${escapeHtml(message.summary)}</div>
+          <h4>[ ÖZET ]${message.summary_model ? ` · ${escapeHtml(message.summary_model)}` : ""}</h4>
+          <div class="summary-text">${markdown(message.summary)}</div>
         </div>` : ""}
-      ${message.ics_payload ? '<div class="invite-card" id="invite-card"><h4>TAKVİM DAVETİ</h4><div class="invite-row">okunuyor…</div></div>' : ""}
+      ${message.ics_payload ? '<div class="invite-card" id="invite-card"><h4>[ TAKVİM DAVETİ ]</h4><div class="invite-row">okunuyor…</div></div>' : ""}
       ${attachments.length ? `
         <div class="summary-card" style="background:var(--bg-1);border-color:var(--line)">
-          <h4 style="color:var(--text-3)">EKLER (${attachments.length})</h4>
+          <h4 style="color:var(--text-3)">[ EKLER ] ${attachments.length}</h4>
           <div>${attachments.map((item) => escapeHtml(`${item.filename} · ${item.content_type}`)).join("<br>")}</div>
         </div>` : ""}
       <div class="mail-body" id="mail-body-host"></div>`;
@@ -320,7 +460,35 @@ export class MailView {
       button.addEventListener("click", () => this.action(button.dataset.act, message));
     });
 
+    this.bindHeaderCollapse();
+
     if (message.ics_payload) this.loadInvite(message.id);
+  }
+
+  /** Aşağı kaydırınca başlık barı küçülsün — mail gövdesine yer açılsın.
+   *
+   * Kullanıcı bildirdi: "mailin aşağı doğru büyük bir kısmı görünmüyor".
+   * Bar `position: sticky` olduğu için ekranın üstünde duruyor ve uzun
+   * araç satırıyla birlikte ~180px yer kaplıyordu. Artık 60px'den sonra
+   * kendiliğinden daralıyor; kullanıcı sağ alttaki düğmeyle sabitleyebilir.
+   */
+  bindHeaderCollapse() {
+    const head = this.detailEl.querySelector(".mail-detail-head");
+    if (!head) return;
+    // Elle seçim otomatik davranışı ezer; yeni mail açılınca sıfırlanır.
+    this.headPinned = null;
+
+    const apply = () => {
+      const compact = this.headPinned === null ? this.detailEl.scrollTop > 60 : this.headPinned;
+      head.classList.toggle("is-compact", compact);
+    };
+    this.detailEl.addEventListener("scroll", apply, { passive: true });
+    head.querySelector("[data-act='headsize']").addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.headPinned = !head.classList.contains("is-compact");
+      apply();
+    });
+    apply();
   }
 
   async loadInvite(messageId) {
@@ -329,7 +497,7 @@ export class MailView {
       const card = document.getElementById("invite-card");
       if (!card) return;
       card.innerHTML = `
-        <h4>TAKVİM DAVETİ</h4>
+        <h4>[ TAKVİM DAVETİ ]</h4>
         <div class="invite-row"><b>${escapeHtml(draft.title || "—")}</b></div>
         <div class="invite-row">🕐 ${escapeHtml(formatDate(draft.starts_at))}</div>
         ${draft.location ? `<div class="invite-row">📍 ${escapeHtml(draft.location)}</div>` : ""}
@@ -345,8 +513,31 @@ export class MailView {
 
   /* -------------------------------------------------------- eylemler */
 
+  /** Listede bir sonraki/önceki maile geç (detay üstündeki oklar). */
+  step(delta) {
+    const index = this.messages.findIndex((row) => row.id === this.selected?.id);
+    const target = this.messages[index + delta];
+    if (target) this.select(target.id);
+  }
+
+  closeDetail() {
+    this.selected = null;
+    this.detailEl.innerHTML = "";
+    this.layoutEl.classList.remove("show-detail");
+    this.app.setDockContext("mail", null);
+    this.renderList();
+  }
+
   async action(kind, message) {
     try {
+      if (kind === "prev") return this.step(-1);
+      if (kind === "next") return this.step(1);
+      if (kind === "close") return this.closeDetail();
+      if (kind === "copycode") {
+        await navigator.clipboard.writeText(message.code);
+        toast("Kopyalandı", message.code, "ok");
+        return;
+      }
       if (kind === "summarize") return await this.summarize(message.id);
       if (kind === "calendar") return await this.toCalendar(message.id);
       if (kind === "ask") {

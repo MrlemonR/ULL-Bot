@@ -123,6 +123,9 @@ def test_css_degiskenleri_tanimli():
     root = re.search(r":root\s*\{(.*?)\n\}", css, re.S)
     assert root, ":root bloğu bulunamadı"
     defined = set(re.findall(r"(--[\w-]+)\s*:", root.group(1)))
+    # `@property` ile kaydedilenler de tanımlıdır — animasyonlanabilir özel
+    # özellikler (`--spin` gibi) `:root`ta değil burada bildiriliyor.
+    defined |= set(re.findall(r"@property\s+(--[\w-]+)", css))
     used = set(re.findall(r"var\((--[\w-]+)", css))
     assert not (used - defined), f"tanımsız CSS değişkeni: {sorted(used - defined)}"
 
@@ -342,3 +345,237 @@ def test_tablo_sutunlari_ezilmiyor():
         "`.msg-bot .body`den miras gelen `word-break: break-word` ürün adını "
         "ortadan bölüyor — hücrede `word-break: normal` olmalı"
     )
+
+
+# --- 2026-08-18 arayüz cilalaması -------------------------------------------
+
+
+def test_koseler_kare():
+    """Kullanıcı isteği: "her şeyin köşeli kenarlardan oluşmasını istiyorum".
+
+    Değişkenler sıfır OLMALI ve sabit yazılmış yuvarlatma KALMAMALI —
+    aksi hâlde bir öğe (avatar, rozet, imleç) yuvarlak kalır ve göze batar.
+    """
+    css = CSS.read_text(encoding="utf-8")
+    root = re.search(r":root\s*\{(.*?)\n\}", css, re.S).group(1)
+    for name in ("--r-sm", "--r", "--r-lg"):
+        match = re.search(rf"{re.escape(name)}:\s*([^;]+);", root)
+        assert match and match.group(1).strip() == "0", f"{name} kare değil"
+
+    sabit = [
+        value for value in re.findall(r"border-radius:\s*([^;]+);", css)
+        if "var(--r" not in value and value.strip() != "0"
+    ]
+    assert not sabit, f"sabit yazılmış yuvarlatma kaldı: {sabit}"
+
+
+def test_gecmis_ust_barda_sol_seritte_degil():
+    """Kullanıcı: "geçmiş sadece sohbet varken görünsün ve hazır'ın sağında"."""
+    html = HTML.read_text(encoding="utf-8")
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+
+    rail = re.search(r'<nav class="rail".*?</nav>', html, re.S).group(0)
+    assert 'data-view="history"' not in rail, "Geçmiş hâlâ sol şeritte"
+    topbar = re.search(r'<div class="topbar-right">(.*?)</div>', html, re.S).group(1)
+    assert 'id="chip-history"' in topbar, "Geçmiş düğmesi üst barda değil"
+    assert topbar.index("chip-conn") < topbar.index("chip-history"), (
+        "Geçmiş, bağlantı rozetinin ('hazır') SAĞINDA olmalı"
+    )
+    assert 'chip-history").hidden' in app_js or "chip-history\").hidden" in app_js, (
+        "Geçmiş düğmesinin görünürlüğü görünüme göre ayarlanmıyor"
+    )
+
+
+def test_mail_kategorileri_ust_barda():
+    """Kategori şeridi soldan üste taşındı; liste en solda kaldı."""
+    html = HTML.read_text(encoding="utf-8")
+    assert 'class="mail-side"' not in html, "eski sol kategori kolonu duruyor"
+    assert 'class="mail-topbar"' in html
+    assert html.index('id="mail-sync"') < html.index('id="mail-search"') < html.index('id="mail-ai-sort"'), (
+        "üst bar sırası: senkron → arama → modele ayırt"
+    )
+    panes = re.search(r'<div class="mail-panes">(.*?)</article>', html, re.S).group(1)
+    assert panes.index('id="mail-list"') < panes.index('id="mail-detail"'), (
+        "mail listesi solda, detay sağda olmalı"
+    )
+
+
+def test_mail_toplu_islem_seridi_var():
+    html = HTML.read_text(encoding="utf-8")
+    mail_js = (JS_DIR / "mail.js").read_text(encoding="utf-8")
+    assert 'id="mail-bulk"' in html
+    for action in ("read", "unread", "star", "category", "trash", "all-read"):
+        assert f'data-bulk="{action}"' in mail_js, f"toplu işlem eksik: {action}"
+
+
+def test_mail_detayinda_gezinme_ve_kapatma():
+    mail_js = (JS_DIR / "mail.js").read_text(encoding="utf-8")
+    for action in ("prev", "next", "close", "copycode"):
+        assert f'data-act="{action}"' in mail_js, f"detay düğmesi eksik: {action}"
+
+
+def test_terminal_havasi_koseli_parantezli_basliklar():
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    for title in ("[ SOHBET ]", "[ MAIL ]", "[ AYARLAR ]"):
+        assert title in app_js, f"başlık köşeli parantezsiz: {title}"
+
+
+def test_gecmis_markdown_render_ediyor():
+    """Geçmişten açılan konuşma canlı sohbetle AYNI görünmeli.
+
+    Kullanıcı ekran görüntüsüyle bildirdi: geçmişteki cevap `| a | b |`,
+    `###` ve `[x](url)` diye ham markdown olarak duruyordu. İki yer de
+    `escapeHtml` kullanıyordu — biri önizleme paneli, biri "oturuma devam et".
+    """
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+    panels_js = (JS_DIR / "panels.js").read_text(encoding="utf-8")
+
+    assert "markdown(message.content)" in app_js, (
+        "resumeSession hâlâ ham metin basıyor"
+    )
+    assert "markdown(String(message.content" in panels_js, (
+        "geçmiş önizlemesi hâlâ ham metin basıyor"
+    )
+
+
+def test_secim_kutulari_ascii():
+    """Native checkbox tarayıcının kendi çizimini kullanıyordu; tema onu
+    boyayamıyordu. Artık `[ ]` / `[X]` — ama gerçek `<input>` duruyor
+    (klavye ve erişilebilirlik)."""
+    css = CSS.read_text(encoding="utf-8")
+    mail_js = (JS_DIR / "mail.js").read_text(encoding="utf-8")
+
+    assert 'content: "[ ]"' in css and 'content: "[X]"' in css
+    assert 'input:checked + .box::before' in css
+    assert '<input type="checkbox"' in mail_js, "gerçek input kaldırılmamalı"
+    assert re.search(r"\.mail-check input \{[^}]*opacity: 0", css), (
+        "input gizlenmeli ama DOM'da kalmalı"
+    )
+
+
+def test_mail_basligi_kaydirinca_kuculuyor():
+    """Uzun maillerde başlık barı ~180px yer kaplıyordu (kullanıcı bildirdi)."""
+    css = CSS.read_text(encoding="utf-8")
+    mail_js = (JS_DIR / "mail.js").read_text(encoding="utf-8")
+
+    assert ".mail-detail-head.is-compact" in css
+    assert "bindHeaderCollapse" in mail_js
+    assert 'data-act="headsize"' in mail_js, "elle küçültme düğmesi yok"
+    assert ".head-toggle" in css
+
+
+def test_kategori_rozeti_sol_ustte():
+    """Kullanıcı bar küçülünce rozetin sol üstte kalmasını istedi."""
+    mail_js = (JS_DIR / "mail.js").read_text(encoding="utf-8")
+    nav = re.search(r'<div class="mail-nav">(.*?)</div>', mail_js, re.S).group(1)
+    assert nav.index('class="cat') < nav.index('data-act="prev"'), (
+        "kategori rozeti gezinme oklarından ÖNCE (solda) olmalı"
+    )
+    assert ".mail-cat-row" not in CSS.read_text(encoding="utf-8"), "eski ortalı satır kaldı"
+
+
+def test_ayar_panelleri_acilip_kapaniyor():
+    panels_js = (JS_DIR / "panels.js").read_text(encoding="utf-8")
+    css = CSS.read_text(encoding="utf-8")
+    assert panels_js.count('<details class="panel"') >= 5
+    assert ".panel > summary" in css
+    assert 'content: "[+]"' in css and 'content: "[-]"' in css
+
+
+def test_ozet_markdown_render_ediliyor():
+    """Özetteki uzun bağlantı taşıyordu ve tıklanamıyordu."""
+    mail_js = (JS_DIR / "mail.js").read_text(encoding="utf-8")
+    css = CSS.read_text(encoding="utf-8")
+    assert "markdown(message.summary)" in mail_js
+    assert re.search(r"\.summary-text \{[^}]*overflow-wrap: anywhere", css)
+
+
+def test_animasyonlar_hareket_azalt_ayarina_saygili():
+    """Sistem "hareketi azalt" diyorsa efektler susmalı."""
+    css = CSS.read_text(encoding="utf-8")
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    assert "@keyframes spin-border" in css, "aktif sekmenin dönen ışığı yok"
+    assert "@keyframes ascii-spin" in css, "ASCII çevirici yok"
+
+
+def test_otomasyon_gorunumu_bagli():
+    """Sol şeritte Takvim'in ALTINDA, üç bölgeli düzenle."""
+    html = HTML.read_text(encoding="utf-8")
+    app_js = (JS_DIR / "app.js").read_text(encoding="utf-8")
+
+    rail = re.search(r'<nav class="rail".*?</nav>', html, re.S).group(0)
+    assert 'data-view="automation"' in rail
+    assert rail.index('data-view="calendar"') < rail.index('data-view="automation"'), (
+        "Otomasyon, Takvim'in altında olmalı"
+    )
+    for element in ("auto-chat", "auto-steps", "auto-screen", "auto-select", "auto-new"):
+        assert f'id="{element}"' in html, f"eksik: {element}"
+    assert "[ OTOMASYON ]" in app_js
+    assert "AutomationView" in app_js
+
+
+def test_otomasyon_canli_goruntu_koordinat_cevirisi():
+    """Görüntü küçültülmüş gösteriliyor; tıklama olduğu gibi gönderilirse
+    sayfada bambaşka bir yere gider."""
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+    assert "frameSize.width / rect.width" in js, "ölçek çevirisi yok"
+    assert '"input", event: "click"' in js or "event: \"click\"" in js
+
+
+def test_otomasyonda_sistem_diyalogu_yok():
+    """`window.prompt`/`confirm` işletim sisteminin penceresiyle çiziliyor:
+    uygulamanın teması, kare köşeleri, yazı tipi geçerli olmuyor."""
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+    kod = "\n".join(
+        line for line in js.splitlines()
+        if not line.lstrip().startswith(("*", "//", "/*"))
+    )
+    assert "window.prompt(" not in kod and "window.confirm(" not in kod
+    assert "formDialog" in kod and "openModal" in kod
+
+
+def test_otomasyon_ayirici_surukleniyor():
+    """Sohbet/adımlar ile tarayıcı arasındaki çizgi sürüklenebilmeli."""
+    html = HTML.read_text(encoding="utf-8")
+    css = CSS.read_text(encoding="utf-8")
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+
+    assert 'id="auto-splitter"' in html
+    assert re.search(r"\.auto-splitter \{[^}]*cursor: col-resize", css)
+    assert re.search(r"\.auto-layout \{[^}]*grid-template-columns: 420px 6px 1fr", css)
+    assert "bindSplitter" in js and "localStorage" in js, "genişlik hatırlanmıyor"
+
+
+def test_izinli_siteler_satir_satir_giriliyor():
+    """Kullanıcı: "virgülle eklemeyelim, bir box olsun, + ile ilerleyelim"."""
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+    css = CSS.read_text(encoding="utf-8")
+
+    assert 'type: "list"' in js, "site alanı hâlâ tek satır"
+    assert "data-row-add" in js and "data-row-del" in js
+    assert ".dlg-row" in css
+    assert "sites.split(\",\")" not in js, "hâlâ virgülle ayrılıyor"
+
+
+def test_engelde_izin_ver_dugmesi():
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+    assert "askAllow" in js and "allow_host" in js
+
+
+def test_sekme_secici_var():
+    html = HTML.read_text(encoding="utf-8")
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+    assert 'id="auto-tabs"' in html
+    assert "renderTabs" in js and "focus_tab" in js
+
+
+def test_adim_yonetimi_arayuzu():
+    """Adım ekleme, sıralama ve tür seçimi arayüzde bağlı olmalı."""
+    html = HTML.read_text(encoding="utf-8")
+    js = (JS_DIR / "automation.js").read_text(encoding="utf-8")
+
+    assert 'id="auto-add-step"' in html
+    assert "addStepDialog" in js
+    for attr in ("data-up", "data-down"):
+        assert attr in js, f"sıralama düğmesi eksik: {attr}"
+    assert "KINDS" in js and 'type: "select"' in js, "adım türü seçimi yok"

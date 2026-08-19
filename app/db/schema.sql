@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS mail_messages (
   seen            INTEGER DEFAULT 0,
   flagged         INTEGER DEFAULT 0,
   answered        INTEGER DEFAULT 0,
-  category        TEXT,                 -- toplanti|is|fatura|bulten|bildirim|kisisel|diger
+  category        TEXT,                 -- bkz. app/mail/classify.py CATEGORIES
   category_source TEXT,                 -- rule | llm | user
   category_reason TEXT,
   summary         TEXT,                 -- LLM özeti; istenince üretilir, önbelleklenir
@@ -140,3 +140,55 @@ CREATE INDEX IF NOT EXISTS idx_mail_account_folder_date
 CREATE INDEX IF NOT EXISTS idx_mail_category ON mail_messages (category, date_ts DESC);
 -- Takvim sorguları hep bir tarih aralığı; hatırlatıcı döngüsü de buradan okuyor.
 CREATE INDEX IF NOT EXISTS idx_calendar_starts ON calendar_events (starts_at);
+
+-- Kullanıcının kendi özet kuralları (Faz 10).
+--
+-- Kullanıcı istedi: "her bir değişiklik için ayarlara mail kuralları ekle,
+-- buradan mail için özet alırken kural ekleyebileyim". Kurallar
+-- `SUMMARY_PROMPT`in sonuna ekleniyor, yani modele TALİMAT olarak gidiyor —
+-- mail içeriği gibi "veri" değil. Bu yüzden yalnızca kullanıcı yazabiliyor.
+CREATE TABLE IF NOT EXISTS mail_rules (
+  id         INTEGER PRIMARY KEY,
+  text       TEXT NOT NULL,
+  enabled    INTEGER DEFAULT 1,
+  created_at TEXT
+);
+
+-- Otomasyonlar (Faz 11). Tasarım: docs/OTOMASYON.md
+CREATE TABLE IF NOT EXISTS automations (
+  id          INTEGER PRIMARY KEY,
+  name        TEXT NOT NULL,
+  goal        TEXT,                 -- kullanıcının sohbete yazdığı istek
+  start_url   TEXT,
+  allowlist   TEXT,                 -- JSON liste: izinli alan adları
+  created_at  TEXT,
+  last_run_at TEXT,
+  last_status TEXT                  -- tamam | hata | yarida
+);
+
+-- Sol alttaki adım listesi.
+--
+-- İki katmanlı: `intent` kullanıcının okuyup düzenlediği cümle, `action`
+-- çalıştırılan somut komut. Düzenleme intent'i değiştiriyor; action bir
+-- sonraki çalıştırmada yeniden çözülüyor, böylece sayfa değişse de plan
+-- bozulmuyor (docs/OTOMASYON.md §4).
+CREATE TABLE IF NOT EXISTS automation_steps (
+  id            INTEGER PRIMARY KEY,
+  automation_id INTEGER NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+  position      INTEGER NOT NULL,
+  intent        TEXT NOT NULL,
+  kind          TEXT DEFAULT 'islem',  -- sayfa | oku | yaz | tikla | bekle | kontrol
+  action        TEXT,               -- JSON: {"type":"tikla","index":3}
+  status        TEXT DEFAULT 'bekliyor',
+  last_error    TEXT,
+  updated_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS automation_runs (
+  id            INTEGER PRIMARY KEY,
+  automation_id INTEGER NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+  started_at    TEXT,
+  finished_at   TEXT,
+  status        TEXT,
+  log           TEXT                -- JSON: adım adım ne oldu
+);

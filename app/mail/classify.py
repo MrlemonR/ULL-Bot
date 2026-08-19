@@ -12,7 +12,8 @@ yani önce local model denenir. Bu, `app/router/classifier.py`nin sohbet
 sınıflandırması için kurduğu düzenin aynısı: kural önce, LLM son çare.
 
 Kategoriler Türkçe ve UI'da göründükleri gibi:
-`toplanti`, `is`, `fatura`, `bulten`, `bildirim`, `kisisel`, `diger`.
+`kod`, `genel`, `bildirim`, `reklam`, `toplanti`, `fatura`, `is`,
+`kisisel`, `diger`, `spam`.
 """
 
 from __future__ import annotations
@@ -22,16 +23,32 @@ from dataclasses import dataclass
 
 from app.mail.parser import ParsedMail
 
+# Sıra UI'daki sırayla AYNI: kullanıcı "önemli mailler önde gelsin" dedi ve
+# listeyi kendisi verdi — genel, aktivasyon kodu, reklam, bildirim.
 CATEGORIES: dict[str, str] = {
-    "toplanti": "Toplantı",
-    "is": "İş",
-    "fatura": "Fatura / Ödeme",
-    "bulten": "Bülten",
+    # Aktivasyon/doğrulama kodları. Zamana duyarlı ve tek kullanımlık: bir
+    # giriş kodunu reklamların arasında aramak en can sıkıcı senaryo.
+    "kod": "Aktivasyon Kodu",
+    # Sipariş onayı, kargo/teslimat, dekont. Para zaten ödenmiş, bu bir
+    # bilgilendirme. Ödeme İSTEYEN mailler `fatura`da.
+    "genel": "Genel",
+    # Hesabınla ilgili otomatik haberler: istek listesindeki oyun indirime
+    # girdi, aboneliğin bitiyor, yeni oturum açıldı.
     "bildirim": "Bildirim",
+    # Pazarlama: kampanya, indirim, bülten, duyuru.
+    "reklam": "Reklam",
+    "toplanti": "Toplantı",
+    "fatura": "Fatura / Ödeme",
+    "is": "İş",
     "kisisel": "Kişisel",
     "diger": "Diğer",
     "spam": "Spam",
 }
+
+# `bulten` 2026-08-18'de `reklam` oldu (kullanıcı "bunları reklam
+# kategorisine koy" dedi). Eski satırlar için veri göçü:
+# `app/db/connection.py` → `_apply_data_migrations`.
+RENAMED: dict[str, str] = {"bulten": "reklam"}
 
 # "Tümü" görünümünden ÇIKARILAN kategoriler.
 #
@@ -83,11 +100,84 @@ IS = _words(
     "sözleşme", "sozlesme", "teklif", "onay", "revize", "brief", "sprint",
     "müşteri", "musteri", "client", "iş", "çalışma", "toplantı notu",
 )
-BULTEN = _words(
+REKLAM = _words(
     "bülten", "bulten", "newsletter", "haftalık", "haftalik", "digest",
     "abonelikten çık", "unsubscribe", "duyuru", "kampanya", "indirim",
     "fırsat", "firsat", "promo", "promosyon", "sale", "offer", "deal",
     "blog", "yeni yazı", "weekly", "monthly",
+)
+
+# --- Aktivasyon / doğrulama kodları -----------------------------------------
+#
+# Kullanıcının şikâyeti netti: "verify your email"ler Bildirim'e düşüyordu ve
+# giriş kodunu bulmak için listeyi taramak gerekiyordu. Bunlar kendi
+# kategorisinde ve en üstte.
+KOD = _words(
+    "doğrulama kodu", "dogrulama kodu", "giriş kodu", "giris kodu",
+    "onay kodu", "aktivasyon kodu", "aktivasyon", "güvenlik kodu",
+    "guvenlik kodu", "tek kullanımlık", "tek kullanimlik", "şifre sıfırlama",
+    "sifre sifirlama", "verification code", "confirmation code",
+    "security code", "login code", "sign-in code", "access code",
+    "one-time", "one time password", "otp", "2fa", "two-factor",
+    "verify your email", "verify your account", "confirm your email",
+    "confirm your account", "activate your account", "reset your password",
+    "e-postanı doğrula", "e-postani dogrula", "hesabını doğrula",
+    "hesabini dogrula", "kodunuz", "kodun",
+)
+
+# Gövdedeki asıl kod: 4-8 haneli rakam ya da harf+rakam karışımı bir blok.
+# Kelime sınırı şart — "2026" gibi yıl ya da fiyat yakalamasın diye
+# `_find_code` ayrıca bağlama bakıyor.
+_CODE_TOKEN = re.compile(r"\b([0-9]{4,8}|[A-Z0-9]{5,8})\b")
+# Anahtar kelime ile kodun arasına birkaç kelime girebiliyor:
+# "enter the code below:\n002834". O yüzden araya bakmıyoruz, sadece kodun
+# ÖNCESİNDEKİ kısa pencerede bir kod kelimesi arıyoruz.
+_CODE_CONTEXT = re.compile(
+    r"(kod(?:u|un|unuz|umuz)?|code|otp|pin|şifre|sifre|password|token)",
+    re.IGNORECASE | re.UNICODE,
+)
+
+
+def find_code(text: str) -> str | None:
+    """Doğrulama kodunu gövdeden çıkar (UI'daki "Kodu kopyala" düğmesi için).
+
+    Sadece bir "kod/code/OTP" kelimesinin hemen ardından gelen bloklar
+    sayılıyor; aksi hâlde tarih, fiyat ve sipariş numarası da eşleşirdi.
+    """
+    if not text:
+        return None
+    for match in _CODE_TOKEN.finditer(text[:4000]):
+        before = text[max(0, match.start() - 60):match.start()]
+        if _CODE_CONTEXT.search(before):
+            return match.group(1)
+    return None
+
+
+# --- Sipariş / kargo (Genel) ------------------------------------------------
+# `_words` kelime sınırı koyuyor ama Türkçe ekler onu bozuyor:
+# "sipariş" deseni "siparişi" ile EŞLEŞMEZ. Bu yüzden gövdeleri son ek
+# serbestliğiyle yazıyoruz (`sipariş\w*`).
+GENEL = re.compile(
+    r"\b(?:"
+    r"sipariş\w*|siparis\w*|kargo\w*|teslim\w*|dekont\w*|makbuz\w*|"
+    r"takip numaras\w*|gönderi\w*|gonderi\w*|"
+    r"order(?:s|ed|ing)?|shipp\w*|deliver\w*|tracking|dispatched"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# --- Hesapla ilgili bildirimler ---------------------------------------------
+#
+# Bunlar "indirim" kelimesi geçse bile REKLAM DEĞİL: kullanıcının kendi
+# hesabına/listesine dair. Kullanıcının verdiği örnekler: "istek listendeki
+# oyun indirime girdi", "aboneliğinin yenilenmesine şu kadar kaldı".
+BILDIRIM_HESAP = _words(
+    "istek listen", "istek listendeki", "istek listesi", "wishlist",
+    "aboneliğin", "aboneligin", "aboneliğiniz", "abonelik yenileme",
+    "subscription", "renew", "renewal", "expires", "expiring", "ending soon",
+    "hesabınız", "hesabiniz", "hesabında", "hesabinda", "your account",
+    "güvenlik uyarısı", "guvenlik uyarisi", "security alert",
+    "new sign-in", "yeni oturum", "oturum açma", "oturum acma",
 )
 
 # Otomatik gönderici kalıpları — kişisel mail olma ihtimali sıfıra yakın.
@@ -150,6 +240,35 @@ def classify(mail: ParsedMail, *, own_address: str = "", folder: str = "") -> Ma
     if mail.ics_payload:
         return MailCategory("toplanti", 1.0, "Mailde takvim daveti (text/calendar) eki var.")
 
+    # 1b. Aktivasyon/doğrulama kodu — bültenden de bildirimden de ÖNCE.
+    #
+    # Sıra kritik: bu maillerin çoğu `noreply@` adresinden gelir (adım 6
+    # onları "bildirim" yapardı) ve bazılarında `List-Unsubscribe` başlığı
+    # bile vardır (adım 3 "reklam" yapardı). Kullanıcının şikâyeti tam
+    # buydu: "verify your email"ler Bildirim'e düşüyor.
+    if KOD.search(subject):
+        code = find_code(body)
+        detail = f" (kod: {code})" if code else ""
+        return MailCategory("kod", 0.95, f"Konu satırında doğrulama/giriş kodu ifadesi{detail}.")
+    if KOD.search(body) and find_code(body):
+        return MailCategory("kod", 0.85, "Gövdede kod ifadesi ve kodun kendisi bulundu.")
+
+    # 1c. Sipariş / kargo / dekont — "Genel".
+    #
+    # Bu da `List-Unsubscribe` kontrolünden ÖNCE olmalı: mağazaların sipariş
+    # ve kargo mailleri neredeyse her zaman o başlığı taşıyor ve eskiden
+    # hepsi bültene düşüyordu ("KAFT — Siparişin Teslim Edildi" gibi).
+    if GENEL.search(subject):
+        return MailCategory("genel", 0.88, f"Konu satırında sipariş/kargo ifadesi: {subject[:60]!r}")
+
+    # 1d. Hesabınla ilgili bildirim — reklamdan ÖNCE.
+    #
+    # "İstek listendeki oyun indirime girdi" maili "indirim" kelimesi
+    # yüzünden reklama düşerdi; oysa kullanıcı bunu Bildirim'de istiyor.
+    # Ayırt edici şey konunun SENİN hesabın/listen olması.
+    if BILDIRIM_HESAP.search(haystack):
+        return MailCategory("bildirim", 0.85, "Hesabınla/listenle ilgili otomatik bildirim.")
+
     # 2. Toplantı bağlantısı + konuda toplantı kelimesi.
     if mail.meeting_urls and TOPLANTI.search(haystack):
         return MailCategory(
@@ -160,7 +279,7 @@ def classify(mail: ParsedMail, *, own_address: str = "", folder: str = "") -> Ma
     # 3. Bülten: List-Unsubscribe başlığı standart ve güvenilir.
     if "List-Unsubscribe" in mail.headers or "List-Id" in mail.headers:
         return MailCategory(
-            "bulten", 0.9, "List-Unsubscribe/List-Id başlığı var — toplu gönderim listesi."
+            "reklam", 0.9, "List-Unsubscribe/List-Id başlığı var — toplu gönderim listesi."
         )
 
     # 4. Fatura: konu satırında geçmesi gövdede geçmesinden çok daha güçlü.
@@ -177,13 +296,14 @@ def classify(mail: ParsedMail, *, own_address: str = "", folder: str = "") -> Ma
     if mail.headers.get("Auto-Submitted", "").lower() not in ("", "no"):
         return MailCategory("bildirim", 0.8, "Auto-Submitted başlığı — makine üretimi mesaj.")
     if mail.headers.get("Precedence", "").lower() in ("bulk", "list", "junk"):
-        return MailCategory("bulten", 0.78, "Precedence: bulk/list başlığı.")
+        return MailCategory("reklam", 0.78, "Precedence: bulk/list başlığı.")
 
     # 7. Gövdedeki anahtar kelimeler — buradan sonrası tahmin, güven düşük.
     scores = {
         "fatura": len(FATURA.findall(haystack)),
         "toplanti": len(TOPLANTI.findall(haystack)),
-        "bulten": len(BULTEN.findall(haystack)),
+        "reklam": len(REKLAM.findall(haystack)),
+        "genel": len(GENEL.findall(haystack)),
         "is": len(IS.findall(haystack)),
     }
     best = max(scores, key=lambda key: scores[key])

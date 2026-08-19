@@ -8,7 +8,7 @@ import { AccountDialog } from "./accounts.js";
 import { api } from "./api.js";
 import {
   ICONS, closeModal, el, emptyState, escapeHtml, formatDate, formatRelative,
-  openModal, toast,
+  markdown, openModal, toast,
 } from "./util.js";
 
 /* ============================================================== KOTA ==== */
@@ -237,7 +237,15 @@ export class HistoryView {
         messages.map((message) => `
           <div class="hist-msg role-${escapeHtml(message.role)}">
             <div class="r">${escapeHtml(message.role)}${message.tool_name ? ` · ${escapeHtml(message.tool_name)}` : ""}${message.model ? ` · ${escapeHtml(message.model)}` : ""}</div>
-            <div class="c">${escapeHtml(String(message.content || "").slice(0, 4000))}</div>
+            <div class="c">${
+              // Asistan cevapları canlı sohbetteki gibi render edilir; aksi
+              // hâlde geçmişte tablolar `| a | b |`, başlıklar `###` diye
+              // ham görünüyordu (kullanıcı bildirdi). Kullanıcı ve araç
+              // mesajları düz metin kalıyor — onlar markdown değil.
+              message.role === "assistant"
+                ? markdown(String(message.content || "").slice(0, 4000))
+                : escapeHtml(String(message.content || "").slice(0, 4000))
+            }</div>
           </div>`).join("");
 
       this.detailEl.querySelector("[data-continue]").addEventListener("click", () => {
@@ -265,16 +273,17 @@ export class SettingsView {
 
   async load() {
     this.bodyEl.innerHTML = '<p class="muted"><span class="spin"></span> yükleniyor…</p>';
-    const [accounts, notifications, memory] = await Promise.all([
+    const [accounts, notifications, memory, rules] = await Promise.all([
       api.mailAccounts().catch((error) => ({ accounts: [], error: error.message })),
       api.notifications().catch(() => null),
       api.memory().catch(() => ({ notes: [] })),
+      api.mailRules().catch(() => ({ rules: [] })),
     ]);
     const config = this.app.config;
 
     this.bodyEl.innerHTML = `
-      <div class="panel">
-        <h3>Mail hesapları</h3>
+      <details class="panel" open>
+        <summary><h3>[ MAIL HESAPLARI ]</h3></summary>
         <div id="acct-list"></div>
         <button class="btn btn-primary btn-sm" id="acct-add" style="margin-top:10px">+ Hesap ekle</button>
         <p class="muted" style="margin-top:10px">
@@ -285,10 +294,10 @@ export class SettingsView {
           16 haneli bir <b>uygulama parolası</b> gerekiyor — hesap ekleme
           penceresi seni doğrudan o sayfaya götürüyor.
         </p>
-      </div>
+      </details>
 
-      <div class="panel">
-        <h3>Bildirimler</h3>
+      <details class="panel" open>
+        <summary><h3>[ BİLDİRİMLER ]</h3></summary>
         <p class="muted">
           Arka uç: <b>${escapeHtml(notifications?.backend || "yok")}</b> ·
           ${notifications?.available ? "kullanılabilir" : "bulunamadı"} ·
@@ -299,15 +308,15 @@ export class SettingsView {
           ${notifications?.pending?.length ? `Sırada ${notifications.pending.length} hatırlatma var.` : "Sırada hatırlatma yok."}
         </p>
         <button class="btn btn-ghost btn-sm" id="notify-test" style="margin-top:10px">Test bildirimi gönder</button>
-      </div>
+      </details>
 
-      <div class="panel">
-        <h3>Kalıcı hafıza (<code>remember</code> notları)</h3>
+      <details class="panel" open>
+        <summary><h3>[ KALICI HAFIZA ] <code>remember</code> notları</h3></summary>
         <div id="memory-list"></div>
-      </div>
+      </details>
 
-      <div class="panel">
-        <h3>Çalışma ayarları</h3>
+      <details class="panel" open>
+        <summary><h3>[ ÇALIŞMA AYARLARI ]</h3></summary>
         <dl class="kv">
           <dt>Profil</dt><dd>${escapeHtml(config.profile || "—")}</dd>
           <dt>Kuru çalışma</dt><dd>${config.dry_run ? "AÇIK — değiştiren komutlar çalıştırılmaz" : "kapalı — onaylanan komutlar gerçekten çalışır"}</dd>
@@ -317,9 +326,42 @@ export class SettingsView {
           <dt>Hatırlatma</dt><dd>varsayılan ${config.default_reminder_minutes ?? 10} dk önce</dd>
         </dl>
         <p class="muted">Bu değerler <code>.env</code>'den okunuyor; değiştirmek için dosyayı düzenleyip uygulamayı yeniden başlat.</p>
+      </details>
+
+      <details class="panel" open>
+        <summary><h3>[ MAIL KURALLARI ]</h3></summary>
+        <p class="muted">
+          Mail özetlenirken modele verilecek ek kurallar. Buraya yazdığın her
+          satır özet isteğinin SONUNA ekleniyor, yani varsayılan kuralları
+          ezer. Örnek: <code>İndirimli oyunların indirim sonrası fiyatını da yaz.</code>
+        </p>
+        <div id="rule-list"></div>
+        <form class="rule-form" id="rule-form">
+          <input type="text" id="rule-input" maxlength="400"
+                 placeholder="Yeni kural — örn. “Kargo takip numarasını her zaman yaz”" />
+          <button class="btn btn-primary btn-sm" type="submit">Ekle</button>
+        </form>
+      </details>
+
+      <details class="panel" open>
+        <summary><h3>[ TEMA ]</h3></summary>
+        <p class="muted">
+          Arayüzün rengini, köşelerini ve yazı tipini kendi CSS dosyanla
+          değiştirebilirsin. Uygulamanın dosyalarına dokunman gerekmiyor:
+          aşağıdaki dosya <b>en son</b> yükleniyor, yani oradaki her kural
+          varsayılanı ezer.
+        </p>
+        <dl class="kv">
+          <dt>Tema dosyası</dt><dd><code>${escapeHtml(config.user_theme_path || "~/.config/ull-bot/theme.css")}</code></dd>
+          <dt>Durum</dt><dd>${config.user_theme_exists ? "yüklü" : "yok — dosyayı oluşturunca devreye girer"}</dd>
+          <dt>Örnek tema</dt><dd><code>config/themes/phosphor.css</code></dd>
+          <dt>Belge</dt><dd><code>docs/TEMA.md</code></dd>
+        </dl>
+        <p class="muted">Değişiklikten sonra pencereyi kapatıp aç.</p>
       </div>`;
 
     this.renderAccounts(accounts.accounts || [], accounts.error);
+    this.renderRules(rules.rules || []);
     this.renderMemory(memory.notes || []);
 
     document.getElementById("acct-add").addEventListener("click", () => {
@@ -378,6 +420,59 @@ export class SettingsView {
           toast("Kaldırılamadı", error.message, "err");
         }
       });
+    });
+  }
+
+  renderRules(rules) {
+    const host = document.getElementById("rule-list");
+    if (!host) return;
+    host.innerHTML = rules.length
+      ? rules.map((rule) => `
+          <div class="rule-row ${rule.enabled ? "" : "is-off"}">
+            <label class="mail-check" title="${rule.enabled ? "Kapat" : "Aç"}">
+              <input type="checkbox" data-rule-toggle="${rule.id}" ${rule.enabled ? "checked" : ""}>
+              <span class="box" aria-hidden="true"></span>
+            </label>
+            <span class="rule-text">${escapeHtml(rule.text)}</span>
+            <button class="icon-btn" data-rule-del="${rule.id}" title="Sil">&#10005;</button>
+          </div>`).join("")
+      : '<p class="muted">Henüz kural yok — özetler varsayılan kurallarla üretiliyor.</p>';
+
+    host.querySelectorAll("[data-rule-toggle]").forEach((box) => {
+      box.addEventListener("change", async () => {
+        try {
+          await api.mailRuleToggle(Number(box.dataset.ruleToggle), box.checked);
+          await this.load();
+        } catch (error) {
+          toast("Değiştirilemedi", error.message, "err");
+        }
+      });
+    });
+    host.querySelectorAll("[data-rule-del]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await api.mailRuleDelete(Number(button.dataset.ruleDel));
+          await this.load();
+        } catch (error) {
+          toast("Silinemedi", error.message, "err");
+        }
+      });
+    });
+
+    const form = document.getElementById("rule-form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = document.getElementById("rule-input");
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        await api.mailRuleAdd(text);
+        input.value = "";
+        toast("Kural eklendi", "Sonraki özetlerde geçerli.", "ok");
+        await this.load();
+      } catch (error) {
+        toast("Eklenemedi", error.message, "err");
+      }
     });
   }
 

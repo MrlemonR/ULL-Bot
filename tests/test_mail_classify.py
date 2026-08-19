@@ -38,11 +38,11 @@ def test_takvim_eki_her_seyi_yener():
     assert not decision.needs_llm()
 
 
-def test_list_unsubscribe_bulten_demektir():
+def test_list_unsubscribe_reklam_demektir():
     decision = classify(
         mail(subject="Yeni yazılar", headers={"List-Unsubscribe": "<https://x.com/u>"})
     )
-    assert decision.category == "bulten"
+    assert decision.category == "reklam"
     assert decision.confidence >= 0.9
 
 
@@ -67,8 +67,18 @@ def test_noreply_gonderici_bildirim():
 
 def test_noreply_ama_fatura_konusu_fatura_kalir():
     # Sıra önemli: fatura kontrolü otomatik gönderici kontrolünden ÖNCE.
-    decision = classify(mail(subject="Ödeme makbuzunuz", from_addr="noreply@stripe.com"))
+    decision = classify(mail(subject="Faturanız hazır", from_addr="noreply@stripe.com"))
     assert decision.category == "fatura"
+
+
+def test_makbuz_genel_fatura_degil():
+    """Dekont/makbuz `genel`e gider: para zaten ödenmiş, bu bir bilgilendirme.
+
+    `fatura` ödeme İSTEYEN mailler için (kullanıcının tarifi: "Genel
+    mailler: siteden yaptığım alışverişin dekontu, kargo takibi").
+    """
+    assert classify(mail(subject="Ödeme makbuzunuz")).category == "genel"
+    assert classify(mail(subject="Son ödeme tarihi yaklaşıyor")).category == "fatura"
 
 
 def test_auto_submitted_basligi_bildirim():
@@ -165,3 +175,74 @@ def test_spam_tumu_gorunumunden_haric():
     assert "spam" in HIDDEN_FROM_ALL
     # Diğer hiçbir kategori gizlenmemeli — aksi hâlde mailler sessizce kaybolur.
     assert HIDDEN_FROM_ALL == {"spam"}
+
+
+# --- 2026-08-18: kullanıcının istediği kategoriler --------------------------
+#
+# Örneklerin hepsi kullanıcının kendi kutusundan, ekran görüntüleriyle
+# bildirdiği maillerden alındı.
+
+
+def test_aktivasyon_kodu_kendi_kategorisinde():
+    """"verify your email"ler Bildirim'e düşüyordu — kullanıcının şikâyeti."""
+    assert classify(mail(subject="Newgrounds Login Code")).category == "kod"
+    assert classify(mail(subject="Giriş Kodu: 875184")).category == "kod"
+    assert classify(mail(subject="Verify your email")).category == "kod"
+
+
+def test_kod_list_unsubscribe_basligini_yeniyor():
+    """Kod maili bülten başlığı taşısa bile `kod` kalmalı — sıra meselesi."""
+    decision = classify(
+        mail(subject="Verify your email", headers={"List-Unsubscribe": "<mailto:x@y.z>"})
+    )
+    assert decision.category == "kod"
+
+
+def test_kod_noreply_gondericiyi_yeniyor():
+    decision = classify(mail(subject="Your verification code", from_addr="noreply@x.com"))
+    assert decision.category == "kod"
+
+
+def test_siparis_ve_kargo_genel():
+    """Mağaza mailleri `List-Unsubscribe` taşıyor ve eskiden bültene düşüyordu."""
+    assert classify(
+        mail(subject="Siparişin Teslim Edildi", headers={"List-Unsubscribe": "<x>"})
+    ).category == "genel"
+    assert classify(mail(subject="#474819 siparişi onaylandı")).category == "genel"
+    assert classify(mail(subject="Kargon yola çıktı")).category == "genel"
+
+
+def test_istek_listesi_indirimi_reklam_degil_bildirim():
+    """Kullanıcı: "buraya sadece Steam'de istek listendeki oyunlar indirime
+    girdi, aboneliğin bitiyor gibi şeyler gelsin". "indirim/sale" kelimesi
+    geçse bile bu bir reklam değil — kendi hesabıyla ilgili."""
+    decision = classify(
+        mail(
+            subject="Teardown from your Steam wishlist is now on sale!",
+            body_text="The following items on your wishlist are on sale: Teardown - 50% off!",
+        )
+    )
+    assert decision.category == "bildirim"
+    assert classify(mail(subject="Your Nitro Access is Ending Soon!")).category == "bildirim"
+
+
+def test_pazarlama_maili_reklam():
+    decision = classify(
+        mail(
+            subject="Hey @Mrlemon, Bak Sana Ne Geldi!",
+            body_text="645,99 TL seçimin hazır. indirim kampanya",
+            headers={"List-Unsubscribe": "<x>"},
+        )
+    )
+    assert decision.category == "reklam"
+
+
+def test_kod_govdeden_cikariliyor():
+    """UI'daki "Kodu kopyala" düğmesi bu değere dayanıyor."""
+    from app.mail.classify import find_code
+
+    assert find_code("Please enter the code below:\n002834\n") == "002834"
+    assert find_code("Giriş kodun: 875184 Bu kodun süresi") == "875184"
+    # Tarih, fiyat, sipariş numarası kod DEĞİL — bağlam kelimesi şart.
+    assert find_code("2026 yılında 450000 TL kazandı") is None
+    assert find_code("") is None

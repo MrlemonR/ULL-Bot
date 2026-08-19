@@ -149,3 +149,45 @@ def test_snippet_kirpilir():
 def test_list_unsubscribe_basligi_saklanir():
     mail = parse_message(build(headers={"List-Unsubscribe": "<mailto:x@y.z>"}))
     assert "List-Unsubscribe" in mail.headers
+
+
+# --- IMAP klasör adları (modified UTF-7) ------------------------------------
+
+
+def test_klasor_adi_mutf7_kodlaniyor():
+    """Sunucuya GİDEN klasör adı da modified UTF-7 olmalı (RFC 3501 §5.1.3).
+
+    Sahada patladı: Gmail'in Türkçe çöp klasörü `[Gmail]/Çöp Kutusu`. Bir
+    maili çöpe taşımak istendiğinde ad ham Unicode olarak `imaplib`e
+    gidiyordu ve `UnicodeEncodeError` atıyordu; kullanıcı yalnızca
+    "Internal Server Error" görüyordu. Kodda çözme vardı, kodlama yoktu —
+    ASCII adlar sorunsuz geçtiği için hata görünmüyordu.
+    """
+    from app.mail.imap_client import _encode_folder_name
+
+    # RFC 3501'in kendi örneği.
+    assert _encode_folder_name("~peter/mail/台北/日本語") == "~peter/mail/&U,BTFw-/&ZeVnLIqe-"
+    assert _encode_folder_name("[Gmail]/Çöp Kutusu") == "[Gmail]/&AMcA9g-p Kutusu"
+    # ASCII adlar dokunulmadan geçmeli.
+    assert _encode_folder_name("INBOX") == "INBOX"
+    assert _encode_folder_name("[Gmail]/Spam") == "[Gmail]/Spam"
+    # `&` özel karakter.
+    assert _encode_folder_name("A&B") == "A&-B"
+
+
+def test_klasor_adi_gidip_geliyor():
+    """Kodla → çöz → aynı ad çıkmalı."""
+    from app.mail.imap_client import _decode_folder_name, _encode_folder_name
+
+    for name in ["INBOX", "[Gmail]/Çöp Kutusu", "Önemli", "A&B", "台北", "Arşiv/2026"]:
+        encoded = _encode_folder_name(name)
+        assert encoded.isascii(), f"{name!r} ASCII'ye inmedi: {encoded!r}"
+        assert _decode_folder_name(encoded.encode("ascii")) == name
+
+
+def test_quote_kodlanmis_adi_tirnakliyor():
+    """`_quote` hem kodlamalı hem tırnaklamalı — `imaplib`e giden son hâli bu."""
+    from app.mail.imap_client import _quote
+
+    assert _quote("[Gmail]/Çöp Kutusu") == '"[Gmail]/&AMcA9g-p Kutusu"'
+    assert _quote("INBOX") == '"INBOX"'

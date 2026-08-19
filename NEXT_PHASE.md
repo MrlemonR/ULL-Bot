@@ -7,6 +7,8 @@ Son güncelleme: **2026-08-17**, Faz 9 sonunda.
 
 Okuma sırası:
 
+0. **[`DEVAM.md`](./DEVAM.md)** — BAŞKA BİR MAKİNEDE devam ediyorsan önce
+   bunu oku (Windows kurulumu, çalıştırma, test, kaldığın nokta).
 1. **Bu dosya** — durum, kurallar, sıradaki iş, açık sorular.
 2. **[`FAZ9_TESLIM.md`](./FAZ9_TESLIM.md)** — web araştırma, spam, mail
    render'ı: en son eklenenlerin referansı.
@@ -29,7 +31,7 @@ maile, takvime ve **internete** erişebiliyor.
 
 ## 2. Durum
 
-**511 test geçiyor** (`uv run pytest`). **Git'te son commit `Phase7` —
+**587 test geçiyor** (`uv run pytest`). **Git'te son commit `Phase7` —
 Faz 8 ve 9'un tamamı henüz commit EDİLMEDİ** (kullanıcı istemedi).
 
 | Faz | Ne var |
@@ -40,6 +42,9 @@ Faz 8 ve 9'un tamamı henüz commit EDİLMEDİ** (kullanıcı istemedi).
 | 8c | HTML mail render'ı, spam sürgünü, kaydırma düzeltmesi |
 | 9 | **Web araştırma** (`app/web/`), markdown tablo, kısır döngü koruması |
 | 9b | SearXNG+Tavily arama zinciri, `youtube_search`, turu toparlama, sohbet sıralaması |
+| 10 | **Arayüz cilalaması**: kullanıcı teması, kare köşeler, terminal görünümü, mail kategorileri (`kod`/`genel`/`reklam`), mail üst barı + toplu işlemler |
+| 10b | Özet kuralları (`mail_rules`), küçülen mail başlığı, ASCII seçim kutuları, açılır-kapanır ayar panelleri, animasyonlar |
+| 11 | **Otomasyon** (`app/browser/`): Chromium+CDP, canlı ekran, DOM indeksi, planlayıcı/çalıştırıcı, adım düzenleme, beyaz liste. Tasarım: `docs/OTOMASYON.md` |
 
 ### Çalıştırma
 
@@ -173,6 +178,35 @@ bildirimi (dunst). Yol seçilmedi (ntfy, Gotify, Telegram…).
 `GET /api/quota`, `gemini_lite` ve `ollama`yı göstermiyor —
 `describe_chain()` `task_type` verilmeden çağrılıyor.
 
+## 3b. Arayüz (2026-08-18, kullanıcının listesi)
+
+Hepsi canlı doğrulandı (headless Chromium + ekran görüntüsü):
+
+| İstek | Nasıl yapıldı |
+|---|---|
+| Özel CSS teması | `~/.config/ull-bot/theme.css` (ya da `.env` → `USER_THEME`). `/theme.css` ucu servis ediyor, `index.html` **en son** yüklüyor. Belge: `docs/TEMA.md`, örnek: `config/themes/phosphor.css` |
+| Kare köşeler | `--r-sm/--r/--r-lg = 0` + sabit yazılmış tüm yarıçaplar sıfırlandı; test kuralı koruyor |
+| Terminal havası | Başlıklar `[ SOHBET ]` biçiminde, etiketler/rozetler/sekmeler monospace. Gövde metni normal yazı tipinde — "abartmadan" |
+| Geçmiş yeri | Sol şeritten kalktı; üst barda "hazır" rozetinin sağında ve yalnızca Sohbet'te görünüyor |
+| Mail kategorileri | `kod` (Aktivasyon Kodu), `genel` (sipariş/kargo/dekont), `bildirim` (hesabınla ilgili), `reklam` (eski `bulten`). Açılış görünümü "Öncelikli" — reklam ve kararsızlar dışarıda |
+| Aktivasyon kodu | Gövdeden çıkarılıp detayda `[ KOD ] 016823` kartı + "Kodu kopyala" |
+| Mail düzeni | Kategoriler üst bara taşındı, liste en solda, asistan dock'u hiç daralmıyor. Liste öğelerinde seçim kutusu; seçim varken üst bar toplu işlemlere dönüşüyor (okundu/okunmadı/yıldız/kategori/sil + tümünü okundu yap) |
+| Mail detayı | Kategori rozeti ortalandı, sağ üstte ← → gezinme ve ✕ kapatma |
+
+Mevcut 236 mail yeniden sınıflandırıldı (`POST /api/mail/reclassify`, LLM
+yok): 22 aktivasyon kodu ve 19 sipariş maili yanlış kategorilerden çıktı.
+
+### Faz 10b — ikinci arayüz turu (2026-08-18)
+
+| İstek | Nasıl yapıldı |
+|---|---|
+| Özet kuralları | Ayarlar → `[ MAIL KURALLARI ]`. `mail_rules` tablosu, `GET/POST/PATCH/DELETE /api/mail/rules`. Kurallar `SUMMARY_PROMPT`in SONUNA ekleniyor (sonda olan ezer) ve **talimat** olarak gidiyor — mail içeriği onlara dokunamıyor |
+| Seçim kutuları | ASCII: `[ ]` / `[X]`. Gerçek `<input>` DOM'da kalıyor (klavye + erişilebilirlik), sadece görsel olarak gizli |
+| Küçülen mail başlığı | 60px kaydırınca bar tek satıra iniyor (180px → 65px, ölçüldü). Sağ alt köşede elle aç/kapa düğmesi; elle seçim otomatiği ezer |
+| Kategori rozeti | Mail alanının sol üstünde, gezinme oklarının solunda |
+| Açılır-kapanır ayarlar | Her panel `<details>`; göstergesi `[+]` / `[-]` |
+| Animasyonlar | Aktif sekme/şerit düğmesinin kenarında dönen ışık (`@property --spin` + konik gradyan maskesi), görünüm geçişi, liste satırlarının sırayla belirmesi, okunmamış noktanın nabzı, ASCII çevirici (`\|/-`), terminal imleci `▌`, "çalışıyor" rozetinde tarayıcı çizgisi. Hepsi `prefers-reduced-motion` ile susuyor |
+
 ## 4. Cevaplanmış soru (eski "teşhis edilemedi" maddesi)
 
 Sağ kenardaki dar dikey şerit **çözüldü**. Kullanıcı tarif etti: dock
@@ -284,6 +318,12 @@ Hepsi canlı kullanımda ya da testte çıktı, hepsi teste bağlandı:
 | Groq modeli kaldırılmış | Her turda `provider_error` 404, tur zayıf modele düşüyor | `llama-3.3-70b-versatile` Groq'ta yok; `groq/openai/gpt-oss-120b` ile değişti (canlı listeden) |
 | Boş cevap turu bitiriyordu | Araçlar çalışıyor, sonra HİÇBİR ŞEY gelmiyor | Sağlayıcı ne metin ne araç çağrısı döndürünce `done` yayımlanıp boş metin dönülüyordu; artık sağlayıcı hatası sayılıp sıradakine geçiliyor |
 | Aynı aramanın tekrarı | Ajan 15-20 adım dönüp sonuç vermiyor | Küçük yerel model neredeyse aynı sorguyu tekrarlıyordu; sorgular birebir aynı olmadığı için döngü koruması görmüyordu — `web_search` artık tur içinde benzer sorguyu reddediyor |
+| Özeti yerel model yazıyordu | Özet yerine ham mail + `hata枭` gibi bozuk karakterler | Kısa mailler `trivial` zincirine gidiyordu (qwen2.5:3b ilk sırada); özetleme artık `long_context` (gemini → openrouter), yerel modele hiç düşmüyor |
+| Özetteki bağlantı taşıyordu | 500 karakterlik Steam adresi karttan taşıyor, tıklanamıyor | `escapeHtml` yerine `markdown()` + `overflow-wrap: anywhere`; prompta "uzun bağlantıyı yapıştırma" kuralı |
+| Çöpe taşıma 500 veriyordu | "Internal Server Error" | Gmail'in Türkçe çöp klasörü `[Gmail]/Çöp Kutusu`; IMAP klasör adları modified UTF-7 ister, kodda çözme vardı KODLAMA yoktu (`_encode_folder_name`) |
+| Geçmiş ham markdown gösteriyordu | Tablolar `\| a \| b \|`, linkler tıklanamıyor | `resumeSession` ve geçmiş önizlemesi `escapeHtml` kullanıyordu; ikisi de `markdown()`e geçti |
+| Eski arayüz ekranda kalıyordu | CSS/JS değişiyor, ekran değişmiyor | Statik dosyalarda `Cache-Control` yoktu; tarayıcı "heuristic freshness" ile sunucuya sormadan diskten servis ediyordu — artık `no-cache` |
+| `index.html` önbellekte takıldı | Yeni kategoriler/düzen hiç gelmedi, ekran bozuk göründü | `/` ve `/theme.css` `/static` altında değil, mount'un `no-cache` başlığı onlara geçmiyordu. Yeni CSS + ESKİ HTML birleşince düzen dağıldı. İkisine de başlık eklendi; takılı kalan kopya için `~/.cache/ULL-Bot/WebKitCache` silinmeli |
 | Tablo hücreleri ham markdown | `**Razer BlackShark V2 Pro**` ve tıklanamayan `[İnceleme](url)` | Tablolar satır içi kurallardan ÖNCE yer tutucuya alınıyordu; `inline()` ayrıldı ve hücrelere de uygulanıyor |
 | Tablo sütunları eziliyordu | Ürün adı "Ra / zer Barra / cuda X" diye bölünüyor | `width: 100%` + miras `word-break: break-word`; artık `width: auto; min-width: 100%` ve hücrede `word-break: normal` |
 | Yerel model cevap uyduruyordu | Fiyat sütunu boş, YouTube linkleri `watch?v=example_video_id` | Kotalar bitince tur qwen2.5:3b'ye kalıyordu; `tool_use` zincirinden çıkarıldı (`trivial`de duruyor) |

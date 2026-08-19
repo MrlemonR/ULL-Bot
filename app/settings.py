@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # otomatikleşecek, o güne kadar bu manuel anahtar).
     enable_local: bool = True
 
+    # Kullanicinin kendi CSS temasi. Bos ise
+    # `~/.config/ull-bot/theme.css` kullanilir (bkz. docs/TEMA.md).
+    user_theme: str = ""
+
     # --- Faz 9: web aramasi (ISTEGE BAGLI) ---
     # Hicbiri doldurulmazsa arama DuckDuckGo kazimasiyla yapilir: ucretsiz ama
     # motorlar sik istekte captcha/"anomaly" sayfasi donduruyor ve arastirma
@@ -133,6 +137,17 @@ class Settings(BaseSettings):
             return Path(self.workspace_root).expanduser()
         projects = Path.home() / "Projects"
         return projects if projects.is_dir() else Path.home()
+
+    @property
+    def user_theme_path(self) -> Path:
+        """Kullanıcının kendi CSS'i. Yoksa oluşturulmuyor, sadece okunuyor.
+
+        `style.css`in yanına yazmıyoruz: uygulama güncellemesi orayı
+        değiştiriyor ve kullanıcının teması kaybolurdu.
+        """
+        if self.user_theme:
+            return Path(self.user_theme).expanduser()
+        return Path.home() / ".config" / "ull-bot" / "theme.css"
 
     @property
     def audit_log_path(self) -> Path:

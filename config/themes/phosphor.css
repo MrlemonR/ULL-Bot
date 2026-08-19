@@ -1,0 +1,43 @@
+/* Yeşil fosfor terminal teması — ULL-Bot örnek teması.
+ *
+ * Kurulum:
+ *   mkdir -p ~/.config/ull-bot && cp config/themes/phosphor.css ~/.config/ull-bot/theme.css
+ *
+ * Ayrıntı: docs/TEMA.md
+ */
+
+:root {
+  --bg-0: #000000;
+  --bg-1: #060a06;
+  --bg-2: #0a120a;
+  --bg-3: #0f1a0f;
+  --bg-hover: #142014;
+
+  --line: #1c2e1c;
+  --line-soft: #142214;
+  --line-strong: #2a462a;
+
+  --text:   #d6ffd6;
+  --text-2: #9ad39a;
+  --text-3: #6a9c6a;
+
+  --accent: #00ff9c;
+  --accent-2: #00c97b;
+  --accent-soft: #00ff9c1a;
+  --accent-line: #00ff9c40;
+
+  --ok: #00ff9c;
+  --warn: #ffd166;
+  --danger: #ff6b6b;
+  --info: #6bd5ff;
+
+  --ok-soft: #00ff9c14;
+  --warn-soft: #ffd16614;
+  --danger-soft: #ff6b6b14;
+}
+
+/* Her şey monospace — tam terminal. */
+body, button, input, textarea, select { font-family: var(--mono); }
+
+/* İmleç gibi yanıp sönen bir vurgu, sohbet yazarken. */
+.msg-bot .body.cursor::after { color: var(--accent); }

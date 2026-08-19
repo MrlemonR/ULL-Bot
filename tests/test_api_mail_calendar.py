@@ -9,6 +9,8 @@ sahtelemenin doğruluğunu test etmek olurdu. Onlar canlı doğrulandı
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from datetime import datetime, timedelta
 
 import pytest
@@ -286,3 +288,78 @@ def test_spam_kategorisi_elle_atanabilir(client, monkeypatch):
 
 def test_spam_config_kategorilerinde_var(client):
     assert client.get("/api/config").json()["categories"]["spam"] == "Spam"
+
+
+# --- özet kuralları (Faz 10) ------------------------------------------------
+
+
+def test_ozet_kurallari_crud(workspace) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    assert client.get("/api/mail/rules").json() == {"rules": []}
+
+    created = client.post("/api/mail/rules", json={"text": "Son fiyatı da yaz."}).json()
+    assert created["text"] == "Son fiyatı da yaz." and created["enabled"] == 1
+
+    assert client.patch(f"/api/mail/rules/{created['id']}", json={"enabled": False}).json()["ok"]
+    assert client.get("/api/mail/rules").json()["rules"][0]["enabled"] == 0
+
+    assert client.delete(f"/api/mail/rules/{created['id']}").json()["ok"]
+    assert client.get("/api/mail/rules").json() == {"rules": []}
+
+
+def test_bos_kural_reddediliyor(workspace) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    assert client.post("/api/mail/rules", json={"text": "   "}).status_code == 400
+    assert client.post("/api/mail/rules", json={"text": "x" * 401}).status_code == 400
+
+
+async def test_ozet_kullanici_kurallarini_prompta_ekliyor(workspace, monkeypatch) -> None:
+    """Kullanıcının kuralları promptun SONUNDA olmalı — sonda olan ezer.
+
+    Kullanıcının somut isteği: "indirime giren oyunların son fiyatını da
+    göstersin". Bunu her seferinde elle yazmak yerine kural olarak ekliyor.
+    """
+    from app.mail import service, store
+
+    store.add_rule("İndirimli oyunların son fiyatını da yaz.")
+    store.add_rule("Kapalı kural")
+    kapali = store.list_rules()[1]
+    store.set_rule_enabled(kapali["id"], False)
+
+    from app.mail.parser import ParsedMail
+
+    account_id = store.add_account(
+        email="ben@example.com", host="imap.example.com", port=993, username="ben"
+    )
+    message_id = store.upsert_message(
+        account_id, "INBOX", 1,
+        ParsedMail(subject="Steam indirimi", from_addr="x@y.z",
+                   body_text="Teardown %50 indirimde.",
+                   date_ts="2026-08-18T10:00:00+00:00"),
+        seen=False, flagged=False, answered=False,
+    )
+
+    seen: dict = {}
+
+    async def fake_complete(messages, *, task_type="default", session_id=""):
+        seen["content"] = messages[0]["content"]
+        seen["task_type"] = task_type
+        return SimpleNamespace(text="- Teardown %50 indirimde.", model="m", provider="p")
+
+    monkeypatch.setattr(service, "complete_once", fake_complete)
+    await service.summarize(message_id)
+
+    assert "İndirimli oyunların son fiyatını da yaz." in seen["content"]
+    assert "Kapalı kural" not in seen["content"], "kapalı kural prompta girmemeli"
+    # Kurallar mail GÖVDESİNDEN önce, talimat bölümünde olmalı.
+    assert seen["content"].index("son fiyatını") < seen["content"].index("<email")
+    # Özetleme yerel modele düşmemeli (bozuk karakter sorunu).
+    assert seen["task_type"] == "long_context"

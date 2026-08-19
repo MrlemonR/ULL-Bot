@@ -216,9 +216,55 @@ def select_folder(conn: imaplib.IMAP4, folder: str, *, readonly: bool = True) ->
     return 0
 
 
+def _encode_folder_name(name: str) -> str:
+    """Unicode klasör adını IMAP'in "modified UTF-7"sine çevir.
+
+    `_decode_folder_name`in tersi ve onun kadar gerekli: sunucuya GİDEN
+    klasör adı da bu kodlamada olmak zorunda (RFC 3501 §5.1.3).
+
+    Eksikliği sahada patladı: Gmail'in Türkçe çöp klasörü `[Gmail]/Çöp
+    Kutusu`. Bir maili çöpe taşımak istendiğinde ad ham Unicode olarak
+    `imaplib`e gidiyordu, o da ASCII'ye çevirmeye çalışıp
+    `UnicodeEncodeError` atıyordu — kullanıcı sadece "Internal Server
+    Error" görüyordu. ASCII adlar (çoğunluk) hiç dokunulmadan geçtiği için
+    hata yıllarca görünmeyebilirdi.
+
+    Kural: yazdırılabilir ASCII olduğu gibi; `&` → `&-`; geri kalan
+    karakter dizileri UTF-16BE → base64 (`/` yerine `,`, padding yok) →
+    `&...-`.
+    """
+    out: list[str] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if not buffer:
+            return
+        raw = "".join(buffer).encode("utf-16-be")
+        encoded = base64.b64encode(raw).decode("ascii").rstrip("=").replace("/", ",")
+        out.append(f"&{encoded}-")
+        buffer.clear()
+
+    for char in name:
+        if char == "&":
+            flush()
+            out.append("&-")
+        elif " " <= char <= "~":
+            flush()
+            out.append(char)
+        else:
+            buffer.append(char)
+    flush()
+    return "".join(out)
+
+
 def _quote(folder: str) -> str:
-    """Boşluklu/köşeli parantezli klasör adları tırnaklanmalı ('[Gmail]/Trash')."""
-    escaped = folder.replace("\\", "\\\\").replace('"', '\\"')
+    """Klasör adını IMAP'e gönderilebilir hâle getir.
+
+    İki iş: modified UTF-7'ye çevir, sonra tırnakla (boşluklu ve köşeli
+    parantezli adlar tırnak ister: `"[Gmail]/Trash"`).
+    """
+    encoded = _encode_folder_name(folder)
+    escaped = encoded.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 
 
