@@ -192,6 +192,21 @@ class DB:
         cur = self._x("UPDATE personas SET name = ?, prompt = ? WHERE id = ?", (name, prompt, persona_id))
         return self.get_persona(persona_id) if cur.rowcount else None
 
+    def upsert_persona(self, persona_id: str | None, name: str, prompt: str) -> dict:
+        """Dosyadan yükleme için: kimlik varsa güncelle, yoksa aynı adlıyı güncelle, o da yoksa ekle."""
+        with self._lock:
+            if not persona_id or not self.get_persona(persona_id):
+                same = self._q("SELECT id FROM personas WHERE name = ? ORDER BY created_at LIMIT 1", (name,))
+                if same:
+                    persona_id = same[0]["id"]
+            persona_id = persona_id or _new_id()
+            self._x(
+                "INSERT INTO personas (id, name, prompt, created_at) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(id) DO UPDATE SET name = excluded.name, prompt = excluded.prompt",
+                (persona_id, name, prompt, time.time()),
+            )
+            return self.get_persona(persona_id)
+
     def delete_persona(self, persona_id: str) -> bool:
         return self._x("DELETE FROM personas WHERE id = ?", (persona_id,)).rowcount > 0
 

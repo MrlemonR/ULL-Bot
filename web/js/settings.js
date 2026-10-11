@@ -4,7 +4,7 @@ import { DEFAULT_APPEARANCE, applyAppearance } from "./appearance.js";
 import { isInstalled, refreshModels, setModel } from "./models.js";
 import { createSpinner } from "./spinner.js";
 import { S, emit, on } from "./store.js";
-import { toast } from "./ui.js";
+import { confirmDialog, openModal, promptDialog, toast } from "./ui.js";
 import { $, $$, debounce, el, esc, fmtBytes } from "./util.js";
 
 const body = $("#settings-body");
@@ -143,13 +143,141 @@ function renderAppearance() {
     row("Düşünürken kelimeler", "Cooking…, Tuning…, Brewing… gibi. Kapalıysa yalnızca “Thinking…”.", switchCtl(A.spinner_words, set("spinner_words"))),
   );
 
-  const reset = panel("SIFIRLA", "Tüm görünüm ayarlarını varsayılana döndürür.", button("VARSAYILANA DÖN", "btn-ghost", () => {
+  const reset = button("VARSAYILANA DÖN", "btn-ghost", () => {
     Object.assign(A, DEFAULT_APPEARANCE);
     applyAppearance(A);
     save.flush();
     renderAppearanceAgain();
-  }));
-  reset.querySelector(".panel-desc").style.margin = "0";
+  });
+  const saveFile = button("▣ KAYDET", "btn", async () => {
+    save.cancel();
+    await saveSettings({ appearance: A }); // bekleyen değişiklik dosyaya da girsin
+    savePrefab();
+  });
+  const loadFile = button("▤ YÜKLE", "btn-solid", loadPrefab);
+  const files = panel("SIFIRLA · KAYDET · YÜKLE",
+    "<b>Kaydet</b>: görünüm, model ayarları ve tüm kişilikler uygulamanın klasöründeki <code>prefab</code> klasörüne " +
+    "bir dosya olarak yazılır. <b>Yükle</b>: o klasördeki dosyalar listelenir, seçtiğinin ayarları uygulanır. " +
+    "Başka bir yerden aldığın ayar dosyalarını da bu klasöre atabilirsin.");
+  const r = el("div", "row");
+  r.style.flexWrap = "wrap";
+  r.append(reset, saveFile, loadFile);
+  files.appendChild(r);
+}
+
+// --- ayar dosyaları (prefab) ------------------------------------------------------------
+
+async function savePrefab() {
+  const name = await promptDialog({
+    title: "Ayarları dosyaya kaydet",
+    label: "Dosya adı — prefab klasörüne .json olarak kaydedilir.",
+    value: "ayarlarım",
+    ok: "KAYDET",
+  });
+  if (!name) return;
+  const post = (overwrite) => api("/api/prefabs", { method: "POST", body: { name, overwrite } });
+  try {
+    let res;
+    try {
+      res = await post(false);
+    } catch (err) {
+      if (!/zaten var/.test(err.message)) throw err;
+      const ok = await confirmDialog({
+        title: "Üzerine yazılsın mı?", text: `${err.message}. Üzerine yazılsın mı?`, ok: "ÜZERİNE YAZ", danger: false,
+      });
+      if (!ok) return;
+      res = await post(true);
+    }
+    toast(`Kaydedildi → prefab/${res.file}`);
+  } catch (err) {
+    toast("Kaydedilemedi: " + err.message, true);
+  }
+}
+
+async function loadPrefab() {
+  let data;
+  try {
+    data = await api("/api/prefabs");
+  } catch (err) {
+    return toast("Liste alınamadı: " + err.message, true);
+  }
+  let selected = null;
+  const wrap = el("div");
+  wrap.style.display = "contents";
+  wrap.appendChild(el("div", "prefab-dir", `Klasör: ${esc(data.dir)}`));
+  const list = el("div", "prefab-list");
+  wrap.appendChild(list);
+
+  const render = () => {
+    list.innerHTML = "";
+    if (!data.items.length) {
+      list.appendChild(el("p", "pop-empty", "Bu klasörde ayar dosyası yok. Önce KAYDET ile bir tane oluştur ya da .json dosyalarını bu klasöre at."));
+      return;
+    }
+    data.items.forEach((it) => {
+      const item = el("div", "prefab-item" + (it.valid ? "" : " is-bad") + (selected === it.file ? " is-sel" : ""));
+      item.tabIndex = it.valid ? 0 : -1;
+      const meta = it.valid
+        ? [it.saved_at, it.model && `model: ${it.model}`, it.personas.length ? `kişilikler: ${it.personas.join(", ")}` : "kişilik yok",
+           it.active_persona && `aktif: ${it.active_persona}`].filter(Boolean).join(" · ")
+        : `${it.saved_at} · ${it.error}`;
+      item.innerHTML = `<span class="n">${esc(it.name)}</span><span class="m">${esc(it.file)} — ${esc(meta)}</span>`;
+      const del = button("SİL", "btn-danger del", async (e) => {
+        e.stopPropagation();
+        if (!del.classList.contains("is-armed")) {
+          del.classList.add("is-armed");
+          del.textContent = "EMİN MİSİN?";
+          setTimeout(() => { del.classList.remove("is-armed"); del.textContent = "SİL"; }, 3000);
+          return;
+        }
+        try {
+          await api(`/api/prefabs/${encodeURIComponent(it.file)}`, { method: "DELETE" });
+          data.items = data.items.filter((x) => x.file !== it.file);
+          if (selected === it.file) selected = null;
+          render();
+        } catch (err) {
+          toast("Silinemedi: " + err.message, true);
+        }
+      });
+      item.appendChild(del);
+      if (it.valid) {
+        const pick = () => { selected = it.file; render(); list.querySelector(".is-sel")?.focus(); };
+        item.addEventListener("click", pick);
+        item.addEventListener("dblclick", () => $("#modal-foot .btn-solid")?.click());
+        item.addEventListener("keydown", (e) => { if (e.key === " ") { e.preventDefault(); pick(); } });
+      }
+      list.appendChild(item);
+    });
+  };
+  render();
+
+  const file = await openModal({
+    title: "Ayar dosyası yükle",
+    wide: true,
+    body: wrap,
+    buttons: [
+      {
+        label: "KLASÖRÜ AÇ", cls: "btn-ghost", left: true,
+        action: () => api("/api/prefabs/open-folder", { method: "POST" }).catch((err) => toast(err.message, true)),
+      },
+      { label: "VAZGEÇ", cls: "btn-ghost", value: () => null },
+      { label: "YÜKLE", cls: "btn-solid", value: () => selected },
+    ],
+  });
+  if (!file) return;
+  try {
+    const res = await api("/api/prefabs/apply", { method: "POST", body: { file } });
+    S.settings = res.settings;
+    S.personas = res.personas;
+    applyAppearance(S.settings.appearance);
+    emit("settings");
+    emit("personas");
+    if (page) showSettings(page);
+    const it = data.items.find((x) => x.file === file);
+    toast(`“${it ? it.name : file}” yüklendi · ${res.loaded_personas} kişilik`);
+  } catch (err) {
+    toast("Yüklenemedi: " + err.message, true);
+  }
 }
 
 function renderAppearanceAgain() {
@@ -168,6 +296,7 @@ const pulls = new Map(); // indirilen modeller: ad → {controller, status, comp
 
 function renderModels() {
   renderConnection();
+  renderModelSearch();
   const installedPanel = panel("KURULU MODELLER", "Sohbette kullanılacak modeli seç. Sağ üstteki model adından da değiştirebilirsin.",
     button("↻ YENİLE", "btn-ghost", async () => { await refreshModels(); }));
   installedPanel.appendChild(el("div", "", "")).id = "installed-list";
@@ -188,24 +317,153 @@ function renderModels() {
   const scan = panel("ÖNERİLER", "Bilgisayarındaki RAM'e, ekran kartına ve VRAM'e bakar; hangi modelin rahat çalışacağını ve hangi iş için iyi olduğunu söyler.", scanBtn);
   scan.appendChild(el("div")).id = "scan-out";
   if (scanData) renderScan();
+}
 
+// --- model ara & indir (yazarken öneri) -------------------------------------------------
+
+let scanPromise = null;
+function ensureScan() {
+  // Öneriler uygunluk bilgisi için donanım taramasına ihtiyaç duyuyor; sessizce bir kez yap.
+  if (scanData) return Promise.resolve(scanData);
+  scanPromise ||= api("/api/models/recommend")
+    .then((d) => { scanData = d; renderScan(); return d; })
+    .catch(() => { scanPromise = null; return null; });
+  return scanPromise;
+}
+
+function matchModels(q) {
+  if (!scanData) return [];
+  q = q.trim().toLowerCase();
+  if (!q) {
+    // Boşken: bu bilgisayar için önerilenler.
+    return scanData.models.filter((m) => m.best_for.length).slice(0, 8);
+  }
+  const scored = [];
+  for (const m of scanData.models) {
+    const name = m.name.toLowerCase();
+    const family = name.split(":")[0];
+    const text = `${m.desc} ${m.tags.map((t) => CAT_NAMES[t]).join(" ")}`.toLowerCase();
+    let score = -1;
+    if (name.startsWith(q)) score = 0;
+    else if (family.replace(/[^a-z0-9]/g, "").startsWith(q.replace(/[^a-z0-9]/g, "")) && q.replace(/[^a-z0-9]/g, "")) score = 1;
+    else if (name.includes(q)) score = 2;
+    else if (text.includes(q)) score = 3;
+    if (score >= 0) scored.push([score, m]);
+  }
+  scored.sort((a, b) => a[0] - b[0] || FIT_ORDER.indexOf(a[1].fit) - FIT_ORDER.indexOf(b[1].fit) || a[1].size_gb - b[1].size_gb);
+  return scored.slice(0, 8).map(([, m]) => m);
+}
+
+function renderModelSearch() {
   const nameIn = el("input");
-  nameIn.placeholder = "model adı, örn: qwen2.5:14b";
+  nameIn.placeholder = "model adı yaz — örn: llam, qwen, kod, türkçe…";
   nameIn.spellcheck = false;
-  const manualBtn = button("İNDİR", "btn", () => {
+  nameIn.autocomplete = "off";
+  nameIn.setAttribute("role", "combobox");
+  nameIn.setAttribute("aria-expanded", "false");
+  const box = el("div", "pop suggest");
+  box.hidden = true;
+  box.setAttribute("role", "listbox");
+  const wrapIn = el("div", "suggest-wrap");
+  wrapIn.append(nameIn, box);
+
+  const pullBtn = button("İNDİR", "btn", () => {
     const n = nameIn.value.trim();
-    if (n) pull(n);
+    if (n) { close(); pull(n); }
   });
-  nameIn.addEventListener("keydown", (e) => { if (e.key === "Enter") manualBtn.click(); });
-  const manual = panel("ELLE İNDİR", 'Listede olmayan bir model mi? Adını <a href="https://ollama.com/library" target="_blank" rel="noopener"><u>ollama.com/library</u></a>\'den bul ve yaz.');
+  const manual = panel("MODEL ARA & İNDİR",
+    "Adını yazmaya başla: eşleşen modeller, bu bilgisayarda nasıl çalışacakları ve ne işe yaradıklarıyla listelenir. " +
+    'Listede olmayan bir modeli de tam adını yazıp indirebilirsin (<a href="https://ollama.com/library" target="_blank" rel="noopener"><u>ollama.com/library</u></a>).');
   const r = el("div", "row");
-  r.append(nameIn, manualBtn);
-  manual.appendChild(r);
+  r.append(wrapIn, pullBtn);
+  const picked = el("div", "picked");
   const prog = el("div", "progress");
   prog.hidden = true;
-  manual.appendChild(prog);
-  nameIn.addEventListener("input", () => { prog.dataset.pull = nameIn.value.trim(); });
+  manual.append(r, picked, prog);
+
+  let items = [];
+  let hl = -1;
+
+  const close = () => {
+    box.hidden = true;
+    nameIn.setAttribute("aria-expanded", "false");
+    hl = -1;
+  };
+  const showPicked = () => {
+    const name = nameIn.value.trim();
+    prog.dataset.pull = name;
+    const m = scanData?.models.find((x) => x.name === name || `${x.name}:latest` === name);
+    picked.innerHTML = "";
+    if (m) {
+      const list = el("div", "model-list");
+      list.appendChild(modelRow(m));
+      picked.appendChild(list);
+      paintPull(m.name);
+    } else if (name && scanData) {
+      picked.appendChild(el("p", "status", "Katalogda yok — Ollama kütüphanesindeki adı doğruysa İNDİR ile indirilebilir."));
+    }
+  };
+  const choose = (m) => {
+    nameIn.value = m.name;
+    close();
+    showPicked();
+  };
+  const paintBox = () => {
+    box.innerHTML = "";
+    if (!scanData) {
+      box.appendChild(el("div", "hint-row", "Donanım taranıyor…"));
+    } else if (!items.length) {
+      box.appendChild(el("div", "hint-row", "Katalogda eşleşen yok. Tam adı biliyorsan İNDİR'e bas."));
+    } else {
+      if (!nameIn.value.trim()) box.appendChild(el("div", "hint-row", "★ Bu bilgisayar için önerilenler"));
+      items.forEach((m, i) => {
+        const row = el("div", `model-row fit-${m.fit}${i === hl ? " is-hl" : ""}`);
+        row.setAttribute("role", "option");
+        row.innerHTML = modelInfoHtml(m);
+        row.addEventListener("mousedown", (e) => { e.preventDefault(); choose(m); });
+        box.appendChild(row);
+      });
+    }
+    box.hidden = false;
+    nameIn.setAttribute("aria-expanded", "true");
+    // Altta yer yoksa listeyi yukarı aç.
+    const rect = nameIn.getBoundingClientRect();
+    const below = window.innerHeight - rect.bottom;
+    box.classList.toggle("up", below < 320 && rect.top > below);
+    box.querySelector(".is-hl")?.scrollIntoView({ block: "nearest" });
+  };
+  const update = async () => {
+    items = matchModels(nameIn.value);
+    hl = -1;
+    paintBox();
+    showPicked();
+    if (!scanData) {
+      await ensureScan();
+      if (document.activeElement === nameIn) { items = matchModels(nameIn.value); paintBox(); showPicked(); }
+    }
+  };
+
+  nameIn.addEventListener("focus", update);
+  nameIn.addEventListener("input", update);
+  nameIn.addEventListener("blur", () => setTimeout(close, 120));
+  nameIn.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (box.hidden) return update();
+      if (!items.length) return;
+      hl = (hl + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      paintBox();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (!box.hidden && hl >= 0 && items[hl]) choose(items[hl]);
+      else pullBtn.click();
+    } else if (e.key === "Escape") {
+      close();
+    }
+  });
+  modelSearchRefresh = showPicked;
 }
+let modelSearchRefresh = null;
 
 function renderConnection() {
   const urlIn = el("input");
@@ -331,6 +589,39 @@ function hwCells(hw) {
     .join("");
 }
 
+const FIT_ORDER = ["gpu", "partial", "cpu", "no"];
+
+/** Katalog modelinin bilgi bloğu: ad, uygunluk, ★ önerildiği işler, açıklama, boyut. */
+function modelInfoHtml(m) {
+  const installed = isInstalled(m.name);
+  const best = m.best_for.map((c) => `<span class="badge red">★ ${esc(CAT_NAMES[c])}</span>`).join(" ");
+  return (
+    `<div><div class="name">${esc(m.name)} <span class="fit">${esc(m.fit_label)}</span> ${best}` +
+    `${installed ? ' <span class="badge">KURULU</span>' : ""}</div>` +
+    `<div class="info">${esc(m.desc)}</div>` +
+    `<div class="specs"><span>${m.size_gb} GB indirme</span><span>${esc(m.params)}</span>` +
+    `<span>${esc(m.tags.map((t) => CAT_NAMES[t]).join(" · "))}</span></div></div>`
+  );
+}
+
+/** Kullan / indir düğmeli tam satır (öneri listesi ve seçilen model kartı). */
+function modelRow(m) {
+  const installed = isInstalled(m.name);
+  const current = installed && (S.settings.model === m.name || S.settings.model === `${m.name}:latest`);
+  const r = el("div", `model-row fit-${m.fit}`);
+  r.innerHTML = modelInfoHtml(m) + `<div class="acts"></div><div class="progress" data-pull="${esc(m.name)}" hidden></div>`;
+  const acts = $(".acts", r);
+  if (current) acts.appendChild(el("span", "badge red", "AKTİF"));
+  else if (installed) acts.appendChild(button("KULLAN", "btn", () => setModel(m.name)));
+  else {
+    const b = button(pulls.has(m.name) ? "İPTAL" : "İNDİR", m.fit === "no" ? "btn-ghost" : "btn", () => pull(m.name));
+    b.dataset.pullBtn = m.name;
+    if (m.fit === "no") b.title = "Bu bilgisayarda bellek yetmeyebilir";
+    acts.appendChild(b);
+  }
+  return r;
+}
+
 function renderScan() {
   const out = $("#scan-out");
   if (!out || !scanData) return;
@@ -351,7 +642,7 @@ function renderScan() {
 
   const shown = models
     .filter((m) => scanFilter === "all" || (scanFilter === "best" ? m.best_for.length : m.tags.includes(scanFilter)))
-    .sort((a, b) => (scanFilter === "best" ? 0 : ["gpu", "partial", "cpu", "no"].indexOf(a.fit) - ["gpu", "partial", "cpu", "no"].indexOf(b.fit)) || a.size_gb - b.size_gb);
+    .sort((a, b) => (scanFilter === "best" ? 0 : FIT_ORDER.indexOf(a.fit) - FIT_ORDER.indexOf(b.fit)) || a.size_gb - b.size_gb);
 
   if (scanFilter === "best") {
     out.appendChild(el("p", "panel-desc",
@@ -361,29 +652,7 @@ function renderScan() {
   }
 
   const list = el("div", "model-list");
-  shown.forEach((m) => {
-    const installed = isInstalled(m.name);
-    const current = installed && (S.settings.model === m.name || S.settings.model === `${m.name}:latest`);
-    const r = el("div", `model-row fit-${m.fit}`);
-    const best = m.best_for.map((c) => `<span class="badge red">★ ${esc(CAT_NAMES[c])}</span>`).join(" ");
-    r.innerHTML =
-      `<div><div class="name">${esc(m.name)} <span class="fit">${esc(m.fit_label)}</span> ${best}` +
-      `${installed ? ' <span class="badge">KURULU</span>' : ""}</div>` +
-      `<div class="info">${esc(m.desc)}</div>` +
-      `<div class="specs"><span>${m.size_gb} GB indirme</span><span>${esc(m.params)}</span>` +
-      `<span>${esc(m.tags.map((t) => CAT_NAMES[t]).join(" · "))}</span></div></div>` +
-      `<div class="acts"></div><div class="progress" data-pull="${esc(m.name)}" hidden></div>`;
-    const acts = $(".acts", r);
-    if (current) acts.appendChild(el("span", "badge red", "AKTİF"));
-    else if (installed) acts.appendChild(button("KULLAN", "btn", () => setModel(m.name)));
-    else {
-      const b = button("İNDİR", m.fit === "no" ? "btn-ghost" : "btn", () => pull(m.name));
-      b.dataset.pullBtn = m.name;
-      if (m.fit === "no") b.title = "Bu bilgisayarda bellek yetmeyebilir";
-      acts.appendChild(b);
-    }
-    list.appendChild(r);
-  });
+  shown.forEach((m) => list.appendChild(modelRow(m)));
   if (!shown.length) list.appendChild(el("p", "pop-empty", "Bu kategoride model yok."));
   out.appendChild(list);
   pulls.forEach((_, name) => paintPull(name));
@@ -588,10 +857,11 @@ async function addPersona() {
 on("models", () => {
   if (page !== "models") return;
   paintConnection();
+  modelSearchRefresh?.();
   renderInstalled();
   renderScan();
 });
 on("settings", () => {
-  if (page === "models") { renderInstalled(); renderScan(); }
+  if (page === "models") { renderInstalled(); renderScan(); modelSearchRefresh?.(); }
   if (page === "personas") markActiveCards();
 });

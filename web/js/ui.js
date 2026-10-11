@@ -15,9 +15,10 @@ export function toast(text, bad = false) {
 
 // --- diyaloglar ----------------------------------------------------------------
 
-function openModal({ title, body, buttons }) {
+export function openModal({ title, body, buttons, wide = false }) {
   return new Promise((resolve) => {
     const back = $("#modal");
+    $(".modal", back).classList.toggle("is-wide", wide);
     $("#modal-title").textContent = title;
     const bodyNode = $("#modal-body");
     bodyNode.innerHTML = "";
@@ -42,7 +43,9 @@ function openModal({ title, body, buttons }) {
     buttons.forEach((b) => {
       const btn = el("button", `btn ${b.cls || ""}`, esc(b.label));
       btn.type = "button";
-      btn.addEventListener("click", () => close(b.value()));
+      // `action`: pencereyi kapatmadan bir şey yap (ör. klasörü aç).
+      btn.addEventListener("click", () => (b.action ? b.action(btn) : close(b.value())));
+      if (b.left) btn.style.marginRight = "auto";
       foot.appendChild(btn);
     });
 

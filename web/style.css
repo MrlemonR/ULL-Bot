@@ -91,10 +91,16 @@ code { font-family: var(--mono); font-size: 0.92em; }
   display: grid;
   grid-template-columns: var(--side-w) minmax(0, 1fr);
 }
-.app.side-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+/* Gizliyken TEK sütun. (Eskiden "0 1fr"di: kenar çubuğu display:none olunca ana
+ * alan 0 genişlikli ilk sütuna yerleşiyor, içerik kadar genişleyip sola sıkışıyordu;
+ * uzun bir kod satırı gelince de sağa doğru büyüyordu.) */
+.app.side-hidden { grid-template-columns: minmax(0, 1fr); }
 .app.side-hidden .sidebar { display: none; }
 
-.main { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
+/* Sütun genişliği AÇIKÇA ekran kadar (minmax(0, 1fr)). Tanımsızken tarayıcı sütunu
+ * içerideki en uzun satır kadar genişletiyordu: uzun bir kod satırı gelince tüm sohbet,
+ * yazma kutusu ve sağ üstteki model düğmesi ekranın sağına kayıyordu. */
+.main { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); }
 
 .icon-btn {
   width: 2.15rem; height: 2.15rem;
@@ -291,7 +297,7 @@ a.label:hover { color: var(--text); }
 
 /* --- görünümler ---------------------------------------------------------------- */
 
-.view { display: none; min-height: 0; }
+.view { display: none; min-height: 0; min-width: 0; }
 .view.is-active { display: flex; flex-direction: column; }
 .wrap-w { padding-left: max(1.3rem, calc((100% - var(--chat-w)) / 2)); padding-right: max(1.3rem, calc((100% - var(--chat-w)) / 2)); }
 
@@ -303,6 +309,18 @@ a.label:hover { color: var(--text); }
   padding: 2rem max(1.3rem, calc((100% - var(--chat-w)) / 2)) 0.85rem;
   display: flex; flex-direction: column; gap: 1.15rem;
 }
+
+.log-wrap { position: relative; flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.jump {
+  position: absolute; bottom: 0.6rem; left: 50%; transform: translateX(-50%); z-index: 5;
+  padding: 0.45rem 0.85rem;
+  font: 600 0.78rem/1 var(--mono); letter-spacing: 0.08em;
+  color: var(--text);
+  background: var(--panel-solid);
+  border: 1px solid var(--accent-line);
+  box-shadow: 0 10px 30px -12px #000;
+}
+.jump:hover { border-color: var(--red); color: var(--red); }
 
 .empty {
   margin: auto;
@@ -663,6 +681,41 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 0; }
 .fit-no .fit { color: var(--red); border-color: var(--red-line); }
 .progress { grid-column: 1 / -1; font: 0.82rem/1.3 var(--mono); color: var(--text-2); white-space: pre; overflow: hidden; }
 .progress .bar { color: var(--red); }
+
+/* Model adı yazarken öneriler */
+.suggest-wrap { position: relative; flex: 1; min-width: 0; }
+.suggest-wrap > input { width: 100%; font-family: var(--mono); }
+.suggest {
+  left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 26rem;
+}
+.suggest.up { top: auto; bottom: calc(100% + 4px); }
+.suggest .model-row { cursor: pointer; grid-template-columns: minmax(0, 1fr); border-top: 1px solid var(--line); }
+.suggest .model-row:first-child { border-top: none; }
+.suggest .model-row:hover, .suggest .model-row.is-hl { background: #151515; box-shadow: inset 2px 0 0 var(--red); }
+.suggest .hint-row { padding: 0.6rem 0.95rem; font: 0.78rem/1.4 var(--mono); color: var(--text-3); }
+.picked { margin-top: 0.7rem; }
+
+/* Ayar dosyası seçimi */
+.prefab-dir { font: 0.78rem/1.4 var(--mono); color: var(--text-3); overflow-wrap: anywhere; }
+.prefab-list { display: flex; flex-direction: column; border: 1px solid var(--line); max-height: 50vh; overflow-y: auto; }
+.prefab-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.2rem 0.7rem; align-items: center;
+  width: 100%; text-align: left;
+  padding: 0.65rem 0.8rem;
+  border-top: 1px solid var(--line);
+  background: #070707;
+}
+.prefab-item:first-child { border-top: none; }
+.prefab-item:hover { background: #121212; }
+.prefab-item.is-sel { background: #161616; box-shadow: inset 2px 0 0 var(--red); }
+.prefab-item.is-bad { opacity: 0.55; cursor: default; }
+.prefab-item .n { font: 600 0.9rem/1.3 var(--mono); color: var(--text); }
+.prefab-item .n::before { content: "○ "; color: var(--text-3); }
+.prefab-item.is-sel .n::before { content: "● "; color: var(--red); }
+.prefab-item .m { grid-column: 1; font-size: 0.82rem; color: var(--text-3); }
+.prefab-item .del { grid-row: 1 / span 2; grid-column: 2; }
+.modal.is-wide { width: min(640px, 100%); }
 
 .cat-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.85rem; }
 .cat-tabs button { font: 0.78rem/1 var(--mono); letter-spacing: 0.06em; padding: 0.45rem 0.65rem; color: var(--text-3); border: 1px solid var(--line-strong); }

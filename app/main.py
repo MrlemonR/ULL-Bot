@@ -15,7 +15,9 @@ import mimetypes
 import os
 import re
 import socket
+import subprocess
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -30,7 +32,8 @@ from pydantic import BaseModel, Field
 from app import __version__, catalog, hardware
 from app.db import DB
 
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+WEB_DIR = ROOT_DIR / "web"
 
 # Windows'ta MIME türleri kayıt defterinden okunuyor ve bazı makinelerde .js
 # "text/plain" kayıtlı. Tarayıcı o zaman ES modüllerini yüklemeyi reddeder
@@ -164,8 +167,70 @@ class OllamaTestIn(BaseModel):
     url: str = Field(default="", max_length=300)
 
 
+class PrefabSaveIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    overwrite: bool = False
+
+
+class PrefabFileIn(BaseModel):
+    file: str = Field(min_length=1, max_length=200)
+
+
 class PullIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+
+
+# --- ayar dosyaları (prefab) ------------------------------------------------------------
+
+PREFAB_KEYS = ("model", "temperature", "num_ctx", "persona_reminder", "auto_title", "appearance")
+
+
+def prefab_filename(name: str) -> str:
+    """Kullanıcının verdiği addan güvenli bir dosya adı (Türkçe harfler kalır)."""
+    base = re.sub(r"[^\w\- .]", "_", name.strip(), flags=re.UNICODE).strip(" .")[:60]
+    return (base or "ayarlar") + ".json"
+
+
+def prefab_path(folder: Path, file: str) -> Path:
+    if file != Path(file).name or not file.lower().endswith(".json") or file.startswith("."):
+        raise HTTPException(400, "Geçersiz dosya adı")
+    path = folder / file
+    if not path.is_file():
+        raise HTTPException(404, f"Dosya bulunamadı: {file}")
+    return path
+
+
+def summarize_prefab(path: Path) -> dict:
+    saved = time.strftime("%Y-%m-%d %H:%M", time.localtime(path.stat().st_mtime))
+    try:
+        data = json.loads(path.read_text("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError
+        settings_ = data.get("settings") if isinstance(data.get("settings"), dict) else {}
+        personas = [p for p in data.get("personas") or [] if isinstance(p, dict) and p.get("name")]
+    except (OSError, ValueError):
+        return {"file": path.name, "name": path.stem, "saved_at": saved, "valid": False,
+                "error": "Okunamadı (geçerli bir JSON değil)"}
+    active = next((p["name"] for p in personas if p.get("id") == data.get("active_persona_id")), None)
+    return {
+        "file": path.name,
+        "name": str(data.get("name") or path.stem),
+        "saved_at": str(data.get("saved_at") or saved),
+        "model": str(settings_.get("model") or ""),
+        "personas": [str(p["name"]) for p in personas],
+        "active_persona": active,
+        "has_appearance": isinstance(settings_.get("appearance"), dict),
+        "valid": True,
+    }
+
+
+def open_folder(path: Path) -> None:
+    if sys.platform.startswith("win"):
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # --- prompt kurulumu ------------------------------------------------------------------
@@ -259,8 +324,11 @@ def create_app(
     data_dir: str | Path | None = None,
     ollama_url: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    prefab_dir: str | Path | None = None,
 ) -> FastAPI:
     data_dir = Path(data_dir or os.environ.get("ULL_DATA_DIR", "data"))
+    # Ayar dosyaları uygulamanın klasöründe: <proje>/prefab
+    prefab_dir = Path(prefab_dir or os.environ.get("ULL_PREFAB_DIR") or ROOT_DIR / "prefab").resolve()
     db = DB(data_dir / "ull.db", legacy_state=data_dir / "state.json")
     forced_url = normalize_url(ollama_url or "")  # testler için
     retired: list[httpx.AsyncClient] = []
@@ -354,6 +422,69 @@ def create_app(
         if "ollama_url" in patch:
             switch_ollama(effective_url())
         return settings()
+
+    # --- ayar dosyaları (prefab) -------------------------------------------------------------
+
+    @app.get("/api/prefabs")
+    def list_prefabs():
+        files = sorted(prefab_dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True) if prefab_dir.is_dir() else []
+        return {"dir": str(prefab_dir), "items": [summarize_prefab(f) for f in files]}
+
+    @app.post("/api/prefabs", status_code=201)
+    def save_prefab(body: PrefabSaveIn):
+        s = settings()
+        path = prefab_dir / prefab_filename(body.name)
+        if path.exists() and not body.overwrite:
+            raise HTTPException(409, f"{path.name} zaten var")
+        data = {
+            "ull_bot_prefab": 1,
+            "name": body.name.strip(),
+            "saved_at": time.strftime("%Y-%m-%d %H:%M"),
+            "app_version": __version__,
+            "settings": {k: s[k] for k in PREFAB_KEYS},
+            "active_persona_id": s["active_persona_id"],
+            "personas": db.list_personas(),
+        }
+        prefab_dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        os.replace(tmp, path)
+        return {"file": path.name, "path": str(path)}
+
+    @app.post("/api/prefabs/apply")
+    def apply_prefab(body: PrefabFileIn):
+        path = prefab_path(prefab_dir, body.file)
+        try:
+            data = json.loads(path.read_text("utf-8"))
+            raw = data.get("settings") or {}
+            patch = SettingsPatch(**{k: raw[k] for k in PREFAB_KEYS if k in raw})
+            personas = [PersonaIn(name=p.get("name", ""), prompt=p.get("prompt", "")) for p in data.get("personas") or []]
+            ids = [str(p.get("id") or "") or None for p in data.get("personas") or []]
+        except (OSError, ValueError, AttributeError, TypeError) as e:
+            # pydantic'in ValidationError'ı da ValueError.
+            raise HTTPException(422, f"Dosyadaki ayarlar geçersiz: {str(e).splitlines()[0]}")
+        db.update_settings(patch.model_dump(exclude_unset=True, exclude_none=True))
+        loaded = [db.upsert_persona(pid, p.name.strip(), p.prompt) for pid, p in zip(ids, personas)]
+        # Dosyada aktif olan kişiliği seç (yeni kimliğiyle).
+        active = data.get("active_persona_id")
+        for pid, p in zip(ids, loaded):
+            if pid and pid == active:
+                db.update_settings({"active_persona_id": p["id"]})
+        return {"settings": settings(), "personas": db.list_personas(), "loaded_personas": len(loaded)}
+
+    @app.delete("/api/prefabs/{file}")
+    def delete_prefab(file: str):
+        prefab_path(prefab_dir, file).unlink()
+        return {"ok": True}
+
+    @app.post("/api/prefabs/open-folder")
+    def open_prefab_folder():
+        prefab_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            open_folder(prefab_dir)
+        except OSError as e:
+            raise HTTPException(500, f"Klasör açılamadı: {e}")
+        return {"ok": True, "dir": str(prefab_dir)}
 
     # --- kişilikler ----------------------------------------------------------------------
 

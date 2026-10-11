@@ -52,6 +52,8 @@ function renderEmpty(error) {
 function clearLog() {
   log.querySelectorAll(".msg").forEach((m) => m.remove());
   emptyBox.hidden = true;
+  follow = true;
+  jumpBtn.hidden = true;
 }
 
 function showEmpty(error) {
@@ -61,8 +63,41 @@ function showEmpty(error) {
 
 // --- mesaj düğümleri ----------------------------------------------------------------
 
-const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 90;
-const toBottom = () => { log.scrollTop = log.scrollHeight; };
+// Cevap akarken en alta yapışık kal — ama kullanıcı yukarı kaydırınca bırak.
+// Eskiden her karede "en alta yakın mı?" (90px) diye bakılıyordu; küçük
+// tekerlek/touchpad adımları bu eşiği aşamadan bir sonraki kare kullanıcıyı
+// geri aşağı çekiyordu ve cevap yazılırken yukarı çıkılamıyordu.
+const jumpBtn = $("#jump-btn");
+let follow = true;
+let autoTop = 0; // en son bizim kaydırdığımız konum
+
+const distanceToBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight;
+function toBottom() {
+  log.scrollTop = log.scrollHeight;
+  autoTop = log.scrollTop;
+  follow = true;
+  jumpBtn.hidden = true;
+}
+function unfollow() {
+  if (!follow) return;
+  follow = false;
+  jumpBtn.hidden = distanceToBottom() < 40;
+}
+log.addEventListener("wheel", (e) => { if (e.deltaY < 0) unfollow(); }, { passive: true });
+log.addEventListener("touchmove", () => { if (log.scrollTop < autoTop - 2) unfollow(); }, { passive: true });
+log.addEventListener("scroll", () => {
+  // Kaydırma çubuğu / klavye ile yukarı çıkıldı.
+  if (log.scrollTop < autoTop - 2) unfollow();
+  // Kullanıcı en alta geri indi: yeniden takip et.
+  if (distanceToBottom() < 24) {
+    follow = true;
+    autoTop = log.scrollTop;
+    jumpBtn.hidden = true;
+  } else if (!follow) {
+    jumpBtn.hidden = false;
+  }
+}, { passive: true });
+jumpBtn.addEventListener("click", toBottom);
 
 function actButton(label, fn, attr) {
   const b = el("button", "", label);
@@ -225,7 +260,7 @@ async function runStream(body, view, retryText) {
   let queued = false;
 
   const paint = (streaming) => {
-    const stick = view.root.isConnected && nearBottom();
+    const stick = view.root.isConnected && follow;
     view.body.hidden = !(L.content || L.thinking);
     view.body.innerHTML = botHtml(L.content, L.thinking, streaming);
     if (stick) toBottom();
@@ -307,7 +342,7 @@ async function runStream(body, view, retryText) {
   if (doneEv?.chat) upsertChat(doneEv.chat);
   else if (L.chatId) api(`/api/chats/${L.chatId}`).then(({ messages, ...c }) => upsertChat(c)).catch(() => {});
   updateComposer();
-  if (view.root.isConnected && nearBottom()) toBottom();
+  if (view.root.isConnected && follow) toBottom();
 
   if (outcome === "done" && doneEv.first_answer && S.settings.auto_title && L.chatId) {
     api(`/api/chats/${L.chatId}/title`, { method: "POST" })

@@ -69,7 +69,8 @@ def ollama():
 
 @pytest.fixture
 def client(tmp_path, ollama):
-    app = create_app(data_dir=tmp_path, ollama_url="http://ollama.test", transport=httpx.MockTransport(ollama))
+    app = create_app(data_dir=tmp_path, ollama_url="http://ollama.test", transport=httpx.MockTransport(ollama),
+                     prefab_dir=tmp_path / "prefab")
     with TestClient(app) as c:
         yield c
 
@@ -521,3 +522,77 @@ def test_run_reuses_same_version(monkeypatch, capsys):
         srv.close()
     assert opened == [f"http://127.0.0.1:{port}"]
     assert "zaten çalışıyor" in capsys.readouterr().out
+
+
+
+# --- ayar dosyaları (prefab) ----------------------------------------------------------------
+
+
+def test_prefab_save_list_apply_roundtrip(client, tmp_path):
+    neo = client.post("/api/personas", json={"name": "Neo", "prompt": "Uyan."}).json()
+    client.put("/api/active", json={"persona_id": neo["id"]})
+    a = client.get("/api/settings").json()["appearance"]
+    client.put("/api/settings", json={"model": "gemma3:12b", "temperature": 0.4, "appearance": {**a, "rain_enabled": False}})
+
+    r = client.post("/api/prefabs", json={"name": "Gece Modu"})
+    assert r.status_code == 201 and r.json()["file"] == "Gece Modu.json"
+    saved = json.loads((tmp_path / "prefab" / "Gece Modu.json").read_text("utf-8"))
+    assert saved["settings"]["model"] == "gemma3:12b"
+    assert [p["name"] for p in saved["personas"]] == ["Varsayılan", "Neo"]
+    assert "ollama_url" not in saved["settings"]  # makineye özel, dosyaya girmez
+
+    # Aynı ad: üzerine yazmadan önce sorulmalı.
+    assert client.post("/api/prefabs", json={"name": "Gece Modu"}).status_code == 409
+    assert client.post("/api/prefabs", json={"name": "Gece Modu", "overwrite": True}).status_code == 201
+
+    items = client.get("/api/prefabs").json()["items"]
+    assert items[0]["name"] == "Gece Modu" and items[0]["model"] == "gemma3:12b"
+    assert items[0]["personas"] == ["Varsayılan", "Neo"] and items[0]["active_persona"] == "Neo"
+
+    # Her şeyi değiştir, sonra dosyayı yükle.
+    client.put("/api/settings", json={"model": "llama3.2:3b", "temperature": 1.5, "appearance": {**a, "rain_enabled": True}})
+    client.put(f"/api/personas/{neo['id']}", json={"name": "Neo", "prompt": "değişti"})
+    client.put("/api/active", json={"persona_id": client.get("/api/personas").json()[0]["id"]})
+    res = client.post("/api/prefabs/apply", json={"file": "Gece Modu.json"}).json()
+    assert res["settings"]["model"] == "gemma3:12b"
+    assert res["settings"]["temperature"] == 0.4
+    assert res["settings"]["appearance"]["rain_enabled"] is False
+    assert res["settings"]["active_persona_id"] == neo["id"]
+    assert [p["prompt"] for p in res["personas"] if p["name"] == "Neo"] == ["Uyan."]
+    assert len(res["personas"]) == 2  # kopya oluşmadı
+
+
+def test_prefab_handwritten_file_matches_by_name(client, tmp_path):
+    folder = tmp_path / "prefab"
+    folder.mkdir()
+    (folder / "arkadas.json").write_text(json.dumps({
+        "settings": {"model": "qwen3:8b", "appearance": {"font_size": 18}},
+        "personas": [{"name": "Varsayılan", "prompt": "Yeni varsayılan."}, {"name": "Korsan", "prompt": "Arr."}],
+    }), "utf-8")
+    for _ in range(2):  # iki kez yüklemek kişilikleri çoğaltmamalı
+        res = client.post("/api/prefabs/apply", json={"file": "arkadas.json"}).json()
+    assert sorted(p["name"] for p in res["personas"]) == ["Korsan", "Varsayılan"]
+    assert res["settings"]["model"] == "qwen3:8b"
+    assert res["settings"]["appearance"]["font_size"] == 18
+    assert res["settings"]["appearance"]["rain_enabled"] is True  # dosyada olmayan → varsayılan
+
+
+def test_prefab_invalid_files(client, tmp_path):
+    folder = tmp_path / "prefab"
+    folder.mkdir()
+    (folder / "bozuk.json").write_text("{bozuk", "utf-8")
+    (folder / "kotu.json").write_text(json.dumps({"settings": {"temperature": 9}}), "utf-8")
+    items = {i["file"]: i for i in client.get("/api/prefabs").json()["items"]}
+    assert items["bozuk.json"]["valid"] is False
+    assert client.post("/api/prefabs/apply", json={"file": "bozuk.json"}).status_code == 422
+    assert client.post("/api/prefabs/apply", json={"file": "kotu.json"}).status_code == 422
+    assert client.post("/api/prefabs/apply", json={"file": "../ull.db"}).status_code == 400
+    assert client.post("/api/prefabs/apply", json={"file": "yok.json"}).status_code == 404
+    assert client.delete("/api/prefabs/bozuk.json").json() == {"ok": True}
+    assert not (folder / "bozuk.json").exists()
+
+
+def test_prefab_filename_is_safe(client, tmp_path):
+    r = client.post("/api/prefabs", json={"name": "../../Türkçe: ayar/1"}).json()
+    assert "/" not in r["file"] and r["file"].endswith(".json")
+    assert (tmp_path / "prefab" / r["file"]).exists()

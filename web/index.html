@@ -64,12 +64,15 @@
 
       <!-- SOHBET -->
       <section class="view" data-view="chat">
+        <div class="log-wrap">
         <div class="chat-log" id="chat-log" aria-live="polite">
           <div class="empty" id="chat-empty">
             <pre class="banner" id="banner" aria-hidden="true"></pre>
             <p id="empty-title">Lokal model ile konuş.</p>
             <p class="muted" id="empty-meta"></p>
           </div>
+        </div>
+        <button class="jump" id="jump-btn" type="button" hidden>▼ EN ALTA</button>
         </div>
 
         <form class="composer" id="chat-form" autocomplete="off">
