@@ -15,3 +15,6 @@ node_modules/
 .idea/
 .DS_Store
 Thumbs.db
+
+# kullanıcı verisi (kişilikler, ayarlar)
+data/

@@ -1,170 +1,168 @@
-"""Faz 7 REST uçları: oturum geçmişi, arama, kullanım grafiği, kalıcı hafıza.
+import json
 
-`/ws/chat` ve `/api/quota` gibi mevcut uçların TestClient testi yok (proje
-şimdiye kadar bunları canlı/manuel doğruladı) — burada sadece Faz 7'de
-eklenen, UI'sı olmayan yeni uçlar test ediliyor.
-"""
-
-from __future__ import annotations
-
-from pathlib import Path
-
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
-from app.memory.store import ensure_session, save_message, set_note
-from app.quota.tracker import record_usage
+from app.main import create_app
+from app.store import DEFAULT_MODEL, Store
 
 
-def test_sessions_empty_by_default(workspace: Path) -> None:
-    client = TestClient(app)
-    resp = client.get("/api/sessions")
-    assert resp.status_code == 200
-    assert resp.json() == {"sessions": []}
+def ndjson(*chunks: dict) -> bytes:
+    return "".join(json.dumps(c) + "\n" for c in chunks).encode()
 
 
-def test_sessions_lists_with_derived_title(workspace: Path) -> None:
-    ensure_session("s1")
-    save_message("s1", "user", "ULL-Bot'a merhaba de")
-    save_message("s1", "assistant", "Merhaba!")
+class FakeOllama:
+    """Ollama'nın /api/chat ve /api/tags uçlarını taklit eder."""
 
-    client = TestClient(app)
-    resp = client.get("/api/sessions")
-    rows = resp.json()["sessions"]
-    assert len(rows) == 1
-    assert rows[0]["id"] == "s1"
-    assert rows[0]["title"] == "ULL-Bot'a merhaba de"
-    assert rows[0]["message_count"] == 2
-
-
-def test_session_messages_returns_full_record(workspace: Path) -> None:
-    ensure_session("s1")
-    save_message("s1", "user", "merhaba")
-    save_message("s1", "tool", "dir listing", tool_name="list_dir")
-
-    client = TestClient(app)
-    resp = client.get("/api/sessions/s1/messages")
-    body = resp.json()
-    assert body["session_id"] == "s1"
-    roles = [m["role"] for m in body["messages"]]
-    assert roles == ["user", "tool"]
-
-
-def test_search_finds_matching_message(workspace: Path) -> None:
-    ensure_session("s1")
-    save_message("s1", "user", "pdf dosyalarını listele")
-    ensure_session("s2")
-    save_message("s2", "user", "hava durumu nasıl")
-
-    client = TestClient(app)
-    resp = client.get("/api/search", params={"q": "pdf"})
-    results = resp.json()["results"]
-    assert len(results) == 1
-    assert results[0]["session_id"] == "s1"
-
-
-def test_search_empty_query_returns_nothing(workspace: Path) -> None:
-    client = TestClient(app)
-    resp = client.get("/api/search", params={"q": ""})
-    assert resp.json()["results"] == []
-
-
-def test_usage_graph_groups_by_day_and_provider(workspace: Path) -> None:
-    record_usage(provider="groq", model="m", prompt_tokens=10, completion_tokens=5)
-    record_usage(provider="groq", model="m", prompt_tokens=1, completion_tokens=1)
-    record_usage(provider="openrouter", model="m", prompt_tokens=2, completion_tokens=2)
-
-    client = TestClient(app)
-    resp = client.get("/api/usage/graph")
-    points = resp.json()["points"]
-    by_provider = {p["provider"]: p for p in points}
-    assert by_provider["groq"]["requests"] == 2
-    assert by_provider["groq"]["tokens"] == 17
-    assert by_provider["openrouter"]["requests"] == 1
-
-
-def test_memory_notes_roundtrip(workspace: Path) -> None:
-    set_note("preferred_shell", "fish")
-    client = TestClient(app)
-
-    resp = client.get("/api/memory")
-    assert resp.json()["notes"] == [
-        {"key": "preferred_shell", "value": "fish", "updated_at": resp.json()["notes"][0]["updated_at"]}
-    ]
-
-    resp = client.delete("/api/memory/preferred_shell")
-    assert resp.json() == {"ok": True, "key": "preferred_shell"}
-    assert client.get("/api/memory").json()["notes"] == []
-
-
-def test_memory_delete_missing_key_reports_false(workspace: Path) -> None:
-    client = TestClient(app)
-    resp = client.delete("/api/memory/nope")
-    assert resp.json() == {"ok": False, "key": "nope"}
-
-
-# --- kullanıcı teması -------------------------------------------------------
-
-
-def test_tema_dosyasi_yoksa_bos_css_donuyor(workspace: Path) -> None:
-    """404 DEĞİL: tarayıcı konsolunu kirletir ve "bozuk" izlenimi verir."""
-    client = TestClient(app)
-    response = client.get("/theme.css")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/css")
-    assert response.text == ""
-
-
-def test_tema_dosyasi_varsa_icerigi_donuyor(workspace: Path, tmp_path, monkeypatch) -> None:
-    from app.settings import settings
-
-    theme = tmp_path / "tema.css"
-    theme.write_text(":root { --accent: #00ff9c; }", encoding="utf-8")
-    monkeypatch.setattr(settings, "user_theme", str(theme))
-
-    client = TestClient(app)
-    response = client.get("/theme.css")
-    assert response.status_code == 200
-    assert "--accent: #00ff9c" in response.text
-
-
-def test_tema_style_css_ten_SONRA_yukleniyor():
-    """Sıra önemli: kullanıcının kuralları varsayılanı ezebilmeli."""
-    from pathlib import Path
-
-    html = (Path(__file__).resolve().parent.parent / "web" / "index.html").read_text(
-        encoding="utf-8"
-    )
-    assert html.index("/static/style.css") < html.index("/theme.css")
-
-
-def test_index_ve_tema_da_onbellekten_dogrulaniyor(workspace: Path) -> None:
-    """`/` ve `/theme.css` `/static` altında DEĞİL — mount başlığı onlara geçmez.
-
-    Sahada bu boşluk şuna yol açtı: sunucu güncellendi, `style.css` ve
-    modüller yeni geldi ama tarayıcı ESKİ `index.html`i diskten servis etti;
-    kullanıcı yeni kategorileri ve yeni mail düzenini hiç göremedi, üstelik
-    yeni CSS eski HTML'e uygulandığı için ekran bozuk göründü.
-    """
-    client = TestClient(app)
-    for path in ("/", "/theme.css"):
-        response = client.get(path)
-        assert response.status_code == 200
-        assert response.headers.get("cache-control") == "no-cache", (
-            f"{path} önbellek doğrulaması istemiyor"
+    def __init__(self):
+        self.requests: list[dict] = []
+        self.chat_response = httpx.Response(
+            200,
+            content=ndjson(
+                {"message": {"role": "assistant", "content": "Mer"}, "done": False},
+                {"message": {"role": "assistant", "content": "haba"}, "done": False},
+                {"model": DEFAULT_MODEL, "message": {"content": ""}, "done": True,
+                 "eval_count": 2, "eval_duration": 1_000_000_000},
+            ),
         )
+        self.tags_response = httpx.Response(200, json={"models": [{"name": "qwen2.5:7b"}, {"name": "llama3:8b"}]})
+        self.fail_connect = False
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if self.fail_connect:
+            raise httpx.ConnectError("bağlantı reddedildi", request=request)
+        if request.url.path == "/api/tags":
+            return self.tags_response
+        if request.url.path == "/api/chat":
+            self.requests.append(json.loads(request.content))
+            return self.chat_response
+        return httpx.Response(404)
 
 
-def test_statik_dosyalar_onbellekten_dogrulaniyor(workspace: Path) -> None:
-    """`Cache-Control: no-cache` olmadan tarayıcı ESKİ arayüzü gösteriyor.
+@pytest.fixture
+def ollama():
+    return FakeOllama()
 
-    WebKit/Chromium `Cache-Control` yokken "heuristic freshness" uyguluyor:
-    dosyanın yaşına bakıp sunucuya hiç sormadan diskten servis ediyor.
-    Sahada yaşandı — CSS/JS değişti, uygulama yeniden başlatıldı, ekranda
-    eski sürüm çıktı. `no-cache` "önbelleğe alma" değil "kullanmadan önce
-    SOR" demek; dosya değişmediyse 304 dönüyor.
-    """
-    client = TestClient(app)
-    response = client.get("/static/style.css")
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-cache"
+
+@pytest.fixture
+def client(tmp_path, ollama):
+    app = create_app(data_dir=tmp_path, ollama_url="http://ollama.test", transport=httpx.MockTransport(ollama))
+    with TestClient(app) as c:
+        yield c
+
+
+def events(resp) -> list[dict]:
+    return [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+
+
+def test_default_state_has_one_active_persona(client):
+    s = client.get("/api/state").json()
+    assert s["model"] == DEFAULT_MODEL
+    assert len(s["personas"]) == 1
+    assert s["active_persona_id"] == s["personas"][0]["id"]
+
+
+def test_index_is_served(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "ULL-Bot" in r.text
+
+
+def test_persona_crud_and_active_fallback(client):
+    first = client.get("/api/state").json()["personas"][0]
+    p = client.post("/api/personas", json={"name": "Hacker", "prompt": "Kısa konuş."}).json()
+    assert p["name"] == "Hacker"
+
+    upd = client.put(f"/api/personas/{p['id']}", json={"name": "Neo", "prompt": "Uyan."}).json()
+    assert upd == {"id": p["id"], "name": "Neo", "prompt": "Uyan."}
+
+    s = client.put("/api/active", json={"persona_id": p["id"]}).json()
+    assert s["active_persona_id"] == p["id"]
+
+    # Aktif kişilik silinince ilk kalan kişiliğe düşülür.
+    s = client.delete(f"/api/personas/{p['id']}").json()
+    assert s["active_persona_id"] == first["id"]
+    assert client.delete(f"/api/personas/{p['id']}").status_code == 404
+    assert client.put("/api/active", json={"persona_id": "yok"}).status_code == 404
+
+
+def test_empty_persona_name_rejected(client):
+    assert client.post("/api/personas", json={"name": "", "prompt": "x"}).status_code == 422
+
+
+def test_state_persists_to_disk(tmp_path, ollama):
+    transport = httpx.MockTransport(ollama)
+    with TestClient(create_app(data_dir=tmp_path, transport=transport)) as c:
+        c.post("/api/personas", json={"name": "Kalıcı", "prompt": "p"})
+        c.put("/api/settings", json={"model": "llama3:8b"})
+    with TestClient(create_app(data_dir=tmp_path, transport=transport)) as c:
+        s = c.get("/api/state").json()
+    assert s["model"] == "llama3:8b"
+    assert [p["name"] for p in s["personas"]][-1] == "Kalıcı"
+
+
+def test_chat_streams_tokens_with_master_prompt(client, ollama):
+    p = client.post("/api/personas", json={"name": "Neo", "prompt": "Sen Neo'sun."}).json()
+    r = client.post("/api/chat", json={"messages": [{"role": "user", "content": "selam"}], "persona_id": p["id"]})
+    assert r.status_code == 200
+    evs = events(r)
+    assert "".join(e["content"] for e in evs if e["type"] == "token") == "Merhaba"
+    assert evs[-1]["type"] == "done" and evs[-1]["eval_count"] == 2
+
+    sent = ollama.requests[-1]
+    assert sent["model"] == DEFAULT_MODEL
+    assert sent["stream"] is True
+    assert sent["messages"][0] == {"role": "system", "content": "Sen Neo'sun."}
+    assert sent["messages"][1] == {"role": "user", "content": "selam"}
+
+
+def test_chat_uses_active_persona_by_default(client, ollama):
+    active = client.get("/api/state").json()["personas"][0]
+    client.post("/api/chat", json={"messages": [{"role": "user", "content": "hey"}]})
+    assert ollama.requests[-1]["messages"][0]["content"] == active["prompt"]
+
+
+def test_chat_without_persona_sends_no_system_message(client, ollama):
+    pid = client.get("/api/state").json()["personas"][0]["id"]
+    client.delete(f"/api/personas/{pid}")
+    client.post("/api/chat", json={"messages": [{"role": "user", "content": "hey"}]})
+    assert [m["role"] for m in ollama.requests[-1]["messages"]] == ["user"]
+
+
+def test_chat_rejects_system_role_from_client(client):
+    r = client.post("/api/chat", json={"messages": [{"role": "system", "content": "x"}]})
+    assert r.status_code == 422
+
+
+def test_chat_unknown_persona_is_404(client):
+    r = client.post("/api/chat", json={"messages": [{"role": "user", "content": "x"}], "persona_id": "yok"})
+    assert r.status_code == 404
+
+
+def test_chat_missing_model_gives_pull_hint(client, ollama):
+    ollama.chat_response = httpx.Response(404, json={"error": 'model "qwen2.5:7b" not found, try pulling it first'})
+    evs = events(client.post("/api/chat", json={"messages": [{"role": "user", "content": "x"}]}))
+    assert evs == [{"type": "error", "message": "Model bulunamadı: qwen2.5:7b. Kurmak için: ollama pull qwen2.5:7b"}]
+
+
+def test_chat_when_ollama_down(client, ollama):
+    ollama.fail_connect = True
+    evs = events(client.post("/api/chat", json={"messages": [{"role": "user", "content": "x"}]}))
+    assert evs[0]["type"] == "error"
+    assert "bağlanılamadı" in evs[0]["message"]
+
+
+def test_models_ok_and_down(client, ollama):
+    assert client.get("/api/models").json() == {"ok": True, "models": ["llama3:8b", "qwen2.5:7b"]}
+    ollama.fail_connect = True
+    r = client.get("/api/models").json()
+    assert r["ok"] is False and r["models"] == []
+
+
+def test_corrupt_state_file_is_backed_up(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text("{bozuk", "utf-8")
+    store = Store(path)
+    assert store.snapshot()["model"] == DEFAULT_MODEL
+    assert list(tmp_path.glob("state.bozuk-*.json"))

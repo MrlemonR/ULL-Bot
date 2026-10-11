@@ -1,1443 +1,553 @@
-/* ULL-Bot — masaüstü uygulaması arayüzü (Faz 8)
+/* ULL-Bot — terminal / matrix arayüzü
  *
- * Tek pencerede çalışıyor, sekme/adres çubuğu yok, tek kullanıcı var.
- * Bu yüzden "duyarlı web sitesi" değil, "uygulama" gibi davranıyor:
- * sabit yükseklik, iç panellerde kaydırma, dış gövde hiç kaymıyor.
+ * Köşeler KARE (kullanıcı isteği). Değişkenler duruyor ki biri tek satırla
+ * yuvarlatabilsin. Paneller yarı saydam: arkadaki yağmur hafifçe görünüyor
+ * ama metnin okunmasını bozmuyor.
  */
 
 :root {
   color-scheme: dark;
 
-  /* Zemin katmanları — en arkadan öne */
-  --bg-0: #0b0e14;
-  --bg-1: #10141d;
-  --bg-2: #151a25;
-  --bg-3: #1b2130;
-  --bg-hover: #1f2637;
+  --bg-0: #030605;
+  --panel: rgba(6, 12, 9, 0.88);
+  --panel-2: rgba(10, 20, 15, 0.92);
+  --panel-solid: #08110d;
+  --hover: rgba(61, 255, 138, 0.07);
 
-  --line: #232b3b;
-  --line-soft: #1c2331;
-  --line-strong: #2e3850;
+  --line: #173324;
+  --line-strong: #24533a;
 
-  /* Kontrast notu: `--text-3` 10-12px'lik etiketlerde kullanılıyor (sol
-   * şerit, meta satırları). Eski değeri (#6d7789) koyu zeminde 3.97:1
-   * veriyordu — WCAG AA küçük metin için 4.5:1 istiyor ve fark gözle de
-   * belliydi: şerit etiketleri okunmuyordu. Yeni değer 5.9:1. */
-  --text: #eef2f9;
-  --text-2: #b7c1d4;
-  --text-3: #8a94a8;
+  --text: #d9f7e5;
+  --text-2: #9fc9b0;
+  --text-3: #719c84;
 
-  --accent: #5b8cff;
-  --accent-2: #8b6bff;
-  --accent-soft: #5b8cff1f;
-  --accent-line: #5b8cff44;
+  --accent: #3dff8a;
+  --accent-dim: #1fae5a;
+  --accent-soft: rgba(61, 255, 138, 0.1);
+  --accent-line: rgba(61, 255, 138, 0.35);
 
-  --ok: #34c98a;
-  --warn: #eab24a;
-  --danger: #f4626f;
-  --info: #4fb6e0;
+  --danger: #ff5c6c;
+  --danger-soft: rgba(255, 92, 108, 0.12);
+  --warn: #ffc857;
 
-  --ok-soft: #34c98a1c;
-  --warn-soft: #eab24a1c;
-  --danger-soft: #f4626f1c;
-
-  /* Köşeler KARE. Kullanıcı isteği: "her şeyin köşeli kenarlardan oluşmasını
-   * istiyorum" — terminal estetiği. Değişkenler duruyor ki tema yazan biri
-   * tek satırla yuvarlatabilsin (bkz. docs/TEMA.md). */
-  --r-sm: 0;
   --r: 0;
-  --r-lg: 0;
 
-  --rail-w: 78px;
-  --dock-w: 372px;
-
-  --shadow: 0 18px 45px -22px #000c;
-  --font: "Inter", "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  --font: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
 }
 
 * { box-sizing: border-box; }
 
-/* --- terminal havası ------------------------------------------------------
- *
- * "Abartmadan" istendi: gövde metni normal yazı tipinde kalıyor, monospace
- * yalnızca ETİKETLERDE — rozetler, sekmeler, sayaçlar, bölüm başlıkları.
- * Böylece arayüz terminal gibi okunuyor ama mailler ve sohbet cevapları
- * hâlâ rahat okunuyor. */
-.chip, .tab, .cat, .tag, .filter .n, .rail-btn span,
-.mail-item .when, .bulk-count, .fgroup, .summary-card h4 {
-  font-family: var(--mono);
-  letter-spacing: .01em;
-}
-
-/* Özet metni: model bazen 500 karakterlik bir Steam bağlantısı yazıyor.
- * Kırılmazsa kart panelden taşıyor (kullanıcı ekran görüntüsüyle bildirdi). */
-.summary-text { overflow-wrap: anywhere; }
-.summary-text a { overflow-wrap: anywhere; }
-.summary-text p:first-child { margin-top: 0; }
-.summary-text p:last-child { margin-bottom: 0; }
-
-/* `hidden` niteliği UA stylesheet'ten gelir ve author stylesheet'teki
- * HERHANGİ bir `display` bildirimi onu ezer. Yani `.modal-backdrop
- * { display: grid }` yazmak, `<div class="modal-backdrop" hidden>` olmasına
- * rağmen öğeyi görünür bırakır.
- *
- * Bu tam olarak yaşandı: onay diyaloğunun kaplaması hiç kapanmadı, tüm
- * arayüz %80 opak siyah bir örtünün altında kaldı (ekranda "sönük" görünüyor)
- * ve z-index'i yüzünden HİÇBİR TIKLAMA altına geçmiyordu — uygulama
- * kullanılamaz haldeydi. Aynı tuzak `.dock-context` (display: flex) için de
- * geçerliydi.
- *
- * Tek bir kural bu sınıfın tamamını kapatıyor; `!important` burada gerekli
- * çünkü amaç zaten sonraki tüm `display` bildirimlerini yenmek. */
+/* `hidden` niteliğini herhangi bir `display` kuralı ezmesin. */
 [hidden] { display: none !important; }
 
-html, body {
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-}
+html, body { height: 100%; margin: 0; overflow: hidden; }
 
 body {
   background: var(--bg-0);
   color: var(--text);
-  font: 14px/1.55 var(--font);
+  font: 14px/1.6 var(--font);
   -webkit-font-smoothing: antialiased;
 }
 
 button, input, textarea, select { font: inherit; color: inherit; }
-button { cursor: pointer; border: none; background: none; }
-h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
-a { color: var(--accent); }
+button { cursor: pointer; border: none; background: none; padding: 0; }
+h1, h2, h3 { margin: 0; font-weight: 600; }
+code { font-family: var(--mono); font-size: 0.92em; }
+
+::selection { background: var(--accent); color: #021; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #2a3346; border-radius: 0; border: 3px solid transparent;
-  background-clip: content-box;
+  background: var(--line-strong); border: 3px solid transparent; background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover { background: #3a465e; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); background-clip: content-box; }
 
-/* ---------------------------------------------------------------- iskelet */
+:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+/* --- yağmur ---------------------------------------------------------------- */
+
+#rain {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* --- iskelet ----------------------------------------------------------------- */
 
 .app {
-  display: grid;
-  grid-template-columns: var(--rail-w) 1fr;
-  height: 100vh;
-}
-
-/* -------------------------------------------------------------- sol şerit */
-
-.rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 12px 8px 14px;
-  background: var(--bg-1);
-  border-right: 1px solid var(--line-soft);
-}
-
-.rail-brand {
-  width: 38px; height: 38px;
-  border-radius: 0;
-  display: grid; place-items: center;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  font-weight: 700; font-size: 17px; color: #fff;
-  margin-bottom: 14px;
-  box-shadow: 0 8px 20px -8px var(--accent);
-}
-
-.rail-btn {
   position: relative;
-  width: 100%;
-  padding: 9px 4px 7px;
-  border-radius: var(--r);
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  color: var(--text-2);
-  transition: background .14s, color .14s;
-}
-.rail-btn svg {
-  width: 21px; height: 21px;
-  fill: none; stroke: currentColor; stroke-width: 1.7;
-  stroke-linecap: round; stroke-linejoin: round;
-}
-.rail-btn span { font-size: 11px; font-weight: 500; letter-spacing: .01em; }
-.rail-btn:hover { background: var(--bg-2); color: var(--text); }
-.rail-btn.is-active { background: var(--accent-soft); color: var(--accent); }
-.rail-btn.is-active::before {
-  content: ""; position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
-  width: 3px; height: 22px; border-radius: 0; background: var(--accent);
-}
-
-.rail-badge {
-  position: absolute; top: 4px; right: 10px;
-  min-width: 17px; height: 17px; padding: 0 4px;
-  border-radius: 0;
-  background: var(--accent); color: #fff;
-  font-size: 10px; font-weight: 700; line-height: 17px; text-align: center;
-}
-
-.rail-spacer { flex: 1; }
-
-/* ---------------------------------------------------------------- sahne */
-
-.stage {
+  z-index: 1;
+  height: 100%;
   display: grid;
   grid-template-rows: auto 1fr;
-  min-width: 0;
-  /* `min-height: 0` OLMADAN her şey bozuluyor ve sebebi görünmez.
-   *
-   * `.stage` bir grid öğesi ve grid öğelerinin varsayılan `min-height`ı
-   * `auto`dur: içeriklerinin altına KÜÇÜLMEYİ REDDEDERLER. Uzun bir HTML
-   * mail açıldığında `.stage` 25.000px'e büyüdü, altındaki `height: 100%`
-   * zincirinin tamamı o şişmiş boyu miras aldı ve hiçbir panel
-   * kısıtlanmadığı için HİÇBİR YER KAYMADI — içerik ekranın altından
-   * taşıp kayboldu. Zincirdeki diğer her öğede bu satır zaten vardı,
-   * eksik olan tek yer burasıydı. */
-  min-height: 0;
-  background: var(--bg-0);
 }
 
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px 20px;
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-1);
+  gap: 18px;
+  padding: 10px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
 }
-.topbar-title h1 { font-size: 15px; font-family: var(--mono); letter-spacing: .04em; }
-.topbar-title p { margin: 2px 0 0; font-size: 12px; color: var(--text-3); }
-.topbar-right { display: flex; align-items: center; gap: 8px; flex: none; }
+
+.brand {
+  font: 700 15px/1 var(--mono);
+  letter-spacing: 0.12em;
+  color: var(--text);
+}
+.brand b { color: var(--accent); font-weight: 700; }
+
+.tabs { display: flex; gap: 4px; }
+.tab {
+  font: 12px/1 var(--mono);
+  letter-spacing: 0.06em;
+  padding: 8px 12px;
+  color: var(--text-3);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+}
+.tab:hover { color: var(--text); background: var(--hover); }
+.tab.is-active {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 .chip {
-  padding: 4px 10px;
-  border-radius: 0;
-  font-size: 11px; font-weight: 600; letter-spacing: .02em;
-  background: var(--warn-soft); color: var(--warn);
-  border: 1px solid #eab24a33;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 11px/1 var(--mono);
+  letter-spacing: 0.04em;
+  padding: 6px 9px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: var(--r);
   white-space: nowrap;
 }
-.chip-muted { background: var(--bg-3); color: var(--text-3); border-color: var(--line); }
-/* Üst bardaki tıklanabilir rozet ([ GEÇMİŞ ]). Görsel olarak diğer
- * rozetlerle aynı ailede ama düğme gibi davranıyor. */
-.chip-btn {
-  background: var(--bg-3); color: var(--text-2);
-  border: 1px solid var(--line); cursor: pointer;
-}
-.chip-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--line-strong); }
-.chip-dot { display: flex; align-items: center; gap: 6px; }
-.chip-dot i {
-  width: 7px; height: 7px; border-radius: 0;
-  background: var(--text-3); flex: none;
-}
-.chip-dot.is-ok i { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-.chip-dot.is-busy i { background: var(--accent); animation: blink 1s infinite; }
-.chip-dot.is-down i { background: var(--danger); }
-@keyframes blink { 50% { opacity: .3; } }
+.chip.is-warn { color: var(--warn); border-color: rgba(255, 200, 87, 0.4); }
+.chip-dot i { width: 7px; height: 7px; background: var(--text-3); }
+.chip-dot.is-ok i { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.chip-dot.is-bad { color: var(--danger); border-color: rgba(255, 92, 108, 0.4); }
+.chip-dot.is-bad i { background: var(--danger); }
+.chip-btn:hover { color: var(--accent); border-color: var(--accent-line); }
 
-.views { position: relative; min-height: 0; overflow: hidden; }
-.view { display: none; height: 100%; min-height: 0; }
-.view.is-active { display: block; }
+.views { min-height: 0; position: relative; }
+.view { position: absolute; inset: 0; display: none; }
+.view.is-active { display: flex; flex-direction: column; }
 
-.pad { height: 100%; overflow-y: auto; padding: 20px 22px 32px; }
+/* --- sohbet ------------------------------------------------------------------ */
 
-/* --------------------------------------------- bölünmüş görünüm + sohbet dock */
-
-.split {
-  display: grid;
-  grid-template-columns: 1fr var(--dock-w);
-  height: 100%;
+.chat-log {
+  flex: 1;
   min-height: 0;
-}
-.split.dock-collapsed { grid-template-columns: 1fr 46px; }
-.split-main { min-width: 0; min-height: 0; overflow: hidden; }
-.split-dock {
-  border-left: 1px solid var(--line-soft);
-  background: var(--bg-1);
-  display: flex; flex-direction: column;
-  min-height: 0;
+  overflow-y: auto;
+  padding: 28px max(18px, calc((100% - 860px) / 2)) 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.dock-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 11px 13px;
-  border-bottom: 1px solid var(--line-soft);
+.empty {
+  margin: auto;
+  text-align: center;
+  color: var(--text-2);
+  padding: 28px 30px;
+  background: var(--panel);
+  border: 1px solid var(--line);
 }
-.dock-head h3 { font-size: 13px; flex: 1; }
-/* Daraltılmış dock 46px genişliğinde — içine TEK bir düğme sığar.
- *
- * "Yeni konuşma" (✎) düğmesi de gizlenmeli: iki düğme + aradaki boşluk +
- * padding 76px eder, kolona sığmaz. Ölçüldü: gizlenmediğinde başlık
- * satırının `scrollWidth`i 52px'e çıkıyor (client 45px) ve daraltma düğmesi
- * pencerenin 7px DIŞINA taşıyordu — kullanıcının gördüğü "kalem kalıyor,
- * kapatma düğmesi sağa kayıyor" hatası buydu.
- *
- * Kaybolan işlev değil: dock'u geri açınca ✎ yine orada, ayrıca tam ekran
- * sohbet panelinde de var. */
-.dock-collapsed .dock-head h3,
-.dock-collapsed .dock-head [data-new],
-.dock-collapsed .dock-body,
-.dock-collapsed .dock-context,
-.dock-collapsed .dock-form { display: none; }
-.dock-collapsed .dock-head { padding: 11px 6px; justify-content: center; }
+.empty p { margin: 6px 0 0; }
+.banner {
+  margin: 0 0 16px;
+  font: 14px/1.05 var(--mono);
+  color: var(--accent);
+  text-shadow: 0 0 12px rgba(61, 255, 138, 0.45);
+}
+.muted { color: var(--text-3); }
 
-.dock-context {
-  margin: 9px 11px 0;
-  padding: 8px 11px;
-  border-radius: var(--r-sm);
+.msg {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--r);
+  max-width: 100%;
+}
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  font: 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  text-transform: uppercase;
+}
+.msg-head .who { color: var(--text-2); }
+.msg-body {
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+}
+.msg-body .md { white-space: pre-wrap; }
+.msg-body .md + .md, .msg-body pre + .md, .msg-body .md + pre { margin-top: 10px; }
+.msg-body :not(pre) > code {
   background: var(--accent-soft);
-  border: 1px solid var(--accent-line);
-  font-size: 11.5px; color: var(--text-2);
-  display: flex; align-items: center; gap: 7px;
+  color: var(--accent);
+  padding: 1px 5px;
 }
-.dock-context b { color: var(--accent); font-weight: 600; }
-.dock-context .x { margin-left: auto; color: var(--text-3); font-size: 15px; line-height: 1; }
-
-.dock-body { flex: 1; overflow-y: auto; padding: 11px; min-height: 0; }
-.dock-form { padding: 10px 11px 12px; border-top: 1px solid var(--line-soft); }
-
-/* ---------------------------------------------------------------- sohbet */
-
-.chat-wrap {
-  display: grid; grid-template-rows: 1fr auto;
-  height: 100%; min-height: 0;
-  max-width: 940px; margin: 0 auto; width: 100%;
-}
-.chat-log { overflow-y: auto; padding: 22px 22px 10px; min-height: 0; }
-
-.msg { margin-bottom: 17px; animation: rise .18s ease-out; }
-@keyframes rise { from { opacity: 0; transform: translateY(5px); } }
+.msg-body strong { color: #fff; }
 
 .msg-user {
-  margin-left: auto;
-  max-width: 78%;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  color: #fff;
-  padding: 10px 14px;
-  border-radius: var(--r-lg);
-  white-space: pre-wrap; word-break: break-word;
-  box-shadow: 0 8px 22px -14px var(--accent);
+  align-self: flex-end;
+  max-width: min(78%, 680px);
+  background: var(--panel-2);
+  border-color: var(--line-strong);
 }
+.msg-user .msg-head .who { color: var(--text); }
 
-.msg-bot { max-width: 92%; }
-.msg-bot .body {
-  background: var(--bg-2);
-  border: 1px solid var(--line-soft);
-  padding: 11px 14px;
-  border-radius: var(--r-lg);
-  word-break: break-word;
-}
-.msg-bot .body > *:first-child { margin-top: 0; }
-.msg-bot .body > *:last-child { margin-bottom: 0; }
-.msg-bot p { margin: 0 0 9px; }
-.msg-bot ul, .msg-bot ol { margin: 0 0 9px; padding-left: 20px; }
-.msg-bot li { margin: 2px 0; }
-.msg-bot code {
-  font-family: var(--mono); font-size: 12.5px;
-  background: var(--bg-0); padding: 1px 5px; border-radius: 0;
-  border: 1px solid var(--line-soft);
-}
-.msg-bot pre {
-  background: var(--bg-0); border: 1px solid var(--line);
-  border-radius: var(--r-sm); padding: 11px 13px;
-  overflow-x: auto; margin: 0 0 9px;
-}
-.msg-bot pre code { background: none; border: none; padding: 0; }
-
-.msg-meta {
-  display: flex; flex-wrap: wrap; gap: 6px;
-  margin-top: 7px; font-size: 10.5px;
-}
-.tag {
-  padding: 2.5px 8px; border-radius: 0;
-  background: var(--bg-3); color: var(--text-3);
-  border: 1px solid var(--line-soft);
-  font-weight: 500;
-}
-.tag-accent { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }
-.tag-ok { background: var(--ok-soft); color: var(--ok); border-color: #34c98a33; }
-.tag-warn { background: var(--warn-soft); color: var(--warn); border-color: #eab24a33; }
-.tag-danger { background: var(--danger-soft); color: var(--danger); border-color: #f4626f33; }
-.tag[title] { cursor: help; }
-
-.cursor::after {
-  content: "▍"; color: var(--accent);
-  animation: blink .9s steps(2) infinite;
-  margin-left: 1px;
-}
-
-/* araç çağrısı kartı */
-.tool {
-  margin: 9px 0;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r);
-  background: var(--bg-1);
-  overflow: hidden;
-}
-.tool.is-blocked { border-color: #f4626f44; }
-.tool.is-confirm { border-color: #eab24a44; }
-.tool-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px;
+.msg-bot { border-left: 2px solid var(--accent); }
+.msg-bot .msg-head .who { color: var(--accent); }
+.msg-bot.is-error { border-left-color: var(--danger); }
+.msg-bot.is-error .msg-head .who { color: var(--danger); }
+.err {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid rgba(255, 92, 108, 0.35);
+  padding: 8px 10px;
+  font-family: var(--mono);
   font-size: 12.5px;
-  cursor: pointer;
-  user-select: none;
+  white-space: pre-wrap;
 }
-.tool-head:hover { background: var(--bg-2); }
-.tool-head .name { font-family: var(--mono); color: var(--text); font-size: 12px; }
-.tool-head .args {
-  color: var(--text-3); font-family: var(--mono); font-size: 11px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
-}
-.tool-head .caret { color: var(--text-3); transition: transform .15s; }
-.tool.is-open .caret { transform: rotate(90deg); }
-.tool-body { display: none; padding: 0 12px 11px; }
-.tool.is-open .tool-body { display: block; }
-.tool-body pre {
-  margin: 0; padding: 10px 12px;
-  background: var(--bg-0); border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  font-family: var(--mono); font-size: 11.5px;
-  max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
-}
-.tool-note { font-size: 11.5px; color: var(--text-3); margin: 0 0 7px; }
+.msg-body .err:not(:first-child) { margin-top: 10px; }
 
-.notice {
-  padding: 9px 13px; border-radius: var(--r);
-  font-size: 12.5px; margin: 9px 0;
+.code {
+  margin: 0;
+  background: #020403;
   border: 1px solid var(--line);
-  background: var(--bg-2); color: var(--text-2);
+  overflow-x: auto;
 }
-.notice-danger { background: var(--danger-soft); border-color: #f4626f44; color: #ffb8be; }
-.notice-warn { background: var(--warn-soft); border-color: #eab24a44; color: #f3d79a; }
-.notice-info { background: var(--accent-soft); border-color: var(--accent-line); color: #bcd0ff; }
+.code-lang {
+  font: 10.5px/1 var(--mono);
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.code code {
+  display: block;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+}
 
-/* Boş durum: öğeler ORTADA GRUPLANIR, dikeyde dağılmaz.
- *
- * `place-items: center` tek başına yetmiyor: kap `height: 100%` olduğunda
- * grid örtük satırları kabın yüksekliğini eşit bölüyor ve her öğe KENDİ
- * ~150px'lik satırının ortasına oturuyor — ikon, başlık ve metin
- * birbirinden yüz piksellerce uzakta, sayfa yarım yüklenmiş gibi görünüyor.
- * `align-content: center` satırları içeriğe göre daraltıp topluca ortalar.
- */
-.empty {
-  display: grid;
-  align-content: center;
-  justify-items: center;
+/* Akış sırasında metnin sonundaki blok imleç */
+.cursor {
+  display: inline-block;
+  color: var(--accent);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Gövde henüz boşken (ilk token gelmeden) çift çizgi olmasın */
+.msg-body[hidden] + .msg-foot { border-top: none; }
+.msg-foot {
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  font: 11px/1.3 var(--mono);
+  color: var(--text-3);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* --- "düşünüyor" göstergesi ---------------------------------------------------- */
+
+.spinner {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  height: 100%; min-height: 220px;
-  color: var(--text-2); text-align: center; padding: 24px;
+  font: 12.5px/1.3 var(--mono);
+  color: var(--accent);
 }
-.empty svg {
-  width: 40px; height: 40px; fill: none; stroke: currentColor;
-  stroke-width: 1.4; opacity: .75; color: var(--accent);
+.spinner .bar { letter-spacing: 0; text-shadow: 0 0 8px rgba(61, 255, 138, 0.5); }
+.spinner .verb {
+  /* Claude'daki gibi kelimenin üstünden geçen parıltı */
+  background: linear-gradient(90deg, var(--accent-dim) 0%, var(--accent-dim) 35%, #eafff2 50%, var(--accent-dim) 65%, var(--accent-dim) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
 }
-.empty h3 { font-size: 15px; color: var(--text); }
-.empty p { margin: 0; font-size: 13px; max-width: 380px; color: var(--text-3); }
+.spinner .secs { color: var(--text-3); }
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
 
-/* ------------------------------------------------------------- besteci */
+/* --- yazma kutusu ---------------------------------------------------------------- */
 
-.composer { padding: 10px 22px 18px; }
+.composer {
+  padding: 26px max(18px, calc((100% - 860px) / 2)) 18px;
+}
 .composer-box {
-  display: flex; align-items: flex-end; gap: 8px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  padding: 7px 7px 7px 14px;
-  transition: border-color .15s, box-shadow .15s;
+  position: relative;
+  background: var(--panel-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
 }
-.composer-box:focus-within {
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-.composer-box textarea {
-  flex: 1; border: none; outline: none; background: none;
-  resize: none; padding: 6px 0; max-height: 180px;
-  line-height: 1.5; font-size: 14px;
-}
-.composer-box textarea::placeholder { color: var(--text-3); }
-.composer.is-locked { opacity: .55; pointer-events: none; }
+.composer-box:focus-within { border-color: var(--accent-line); }
 
-.send-btn {
-  width: 34px; height: 34px; flex: none;
-  border-radius: 0;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  display: grid; place-items: center;
-  transition: transform .12s, opacity .12s;
-}
-.send-btn svg { width: 16px; height: 16px; fill: #fff; }
-.send-btn:hover { transform: scale(1.06); }
-.send-btn:disabled { opacity: .4; transform: none; }
-
-.composer-hints { display: flex; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
-.hint {
-  padding: 6px 12px; border-radius: 0;
-  background: var(--bg-2); border: 1px solid var(--line);
-  color: var(--text-2); font-size: 12px;
-  transition: all .13s;
-}
-.hint:hover { color: var(--text); border-color: var(--line-strong); background: var(--bg-3); }
-
-/* ---------------------------------------------------------------- butonlar */
-
-.btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 8px 14px;
-  border-radius: var(--r-sm);
-  font-size: 13px; font-weight: 500;
-  border: 1px solid transparent;
-  transition: all .13s;
-  white-space: nowrap;
-}
-.btn .ico { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { background: #6d99ff; }
-.btn-ghost { background: var(--bg-2); border-color: var(--line); color: var(--text-2); }
-.btn-ghost:hover { background: var(--bg-3); color: var(--text); border-color: var(--line-strong); }
-.btn-danger { background: var(--danger-soft); border-color: #f4626f44; color: #ff9aa3; }
-.btn-danger:hover { background: #f4626f2e; }
-.btn-sm { padding: 6px 11px; font-size: 12px; }
-.btn-block { width: 100%; }
-.btn:disabled { opacity: .45; pointer-events: none; }
-
-.icon-btn {
-  width: 28px; height: 28px; border-radius: var(--r-sm);
-  display: grid; place-items: center;
-  color: var(--text-3); font-size: 17px;
-  transition: all .13s;
-}
-.icon-btn:hover { background: var(--bg-3); color: var(--text); }
-
-input[type="text"], input[type="search"], input[type="password"],
-input[type="email"], input[type="number"], input[type="datetime-local"],
-select, textarea.field {
+.composer textarea {
+  display: block;
   width: 100%;
-  background: var(--bg-1);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 8px 11px;
+  min-height: 52px;
+  max-height: 240px;
+  resize: none;
+  border: none;
   outline: none;
-  transition: border-color .13s, box-shadow .13s;
+  background: transparent;
+  padding: 14px 14px 6px;
+  line-height: 1.55;
 }
-input:focus, select:focus, textarea.field:focus {
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-label.f { display: block; margin-bottom: 12px; }
-label.f > span { display: block; font-size: 12px; color: var(--text-3); margin-bottom: 5px; }
+.composer textarea::placeholder { color: var(--text-3); }
 
-.muted { color: var(--text-3); font-size: 12.5px; margin: 0; }
-.row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.input-wide { max-width: 420px; }
-.section-h { font-size: 13px; color: var(--text-2); margin: 24px 0 11px; }
+.composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px 8px 14px;
+}
+.hint { font: 10.5px/1 var(--mono); color: var(--text-3); letter-spacing: 0.04em; }
+
+.send {
+  font: 600 12px/1 var(--mono);
+  letter-spacing: 0.08em;
+  padding: 9px 14px;
+  color: #021;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r);
+}
+.send:hover { filter: brightness(1.1); }
+.send:disabled { opacity: 0.4; cursor: default; filter: none; }
+.send.is-stop { background: transparent; color: var(--danger); border-color: var(--danger); }
+.send.is-stop:hover { background: var(--danger-soft); }
+
+/* Kişilik seçici: kutunun sol üst köşesinden yukarı taşan sekme */
+.persona-pick {
+  position: absolute;
+  left: -1px;
+  top: 0;
+  transform: translateY(-100%);
+}
+.persona-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 320px;
+  font: 11.5px/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 7px 11px 6px;
+  color: var(--accent);
+  background: var(--panel-solid);
+  border: 1px solid var(--line-strong);
+  border-bottom: none;
+  border-radius: var(--r);
+}
+.persona-btn #persona-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.persona-btn .glyph { font-size: 9px; }
+.persona-btn .caret { color: var(--text-3); }
+.persona-btn:hover, .persona-btn[aria-expanded="true"] { background: #0c1a13; }
+.persona-btn:hover .caret { color: var(--accent); }
+
+.persona-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  min-width: 240px;
+  max-width: 360px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--panel-solid);
+  border: 1px solid var(--accent-line);
+  box-shadow: 0 16px 40px -18px #000;
+  z-index: 10;
+}
+.persona-menu .menu-title {
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid var(--line);
+}
+.persona-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.persona-opt:last-child { border-bottom: none; }
+.persona-opt:hover, .persona-opt:focus-visible { background: var(--hover); outline: none; }
+.persona-opt .n {
+  display: block;
+  font: 12px/1.2 var(--mono);
+  color: var(--text);
+}
+.persona-opt .n::before { content: "○ "; color: var(--text-3); }
+.persona-opt.is-active .n { color: var(--accent); }
+.persona-opt.is-active .n::before { content: "● "; color: var(--accent); }
+.persona-opt .p {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.persona-opt.is-manage .n { color: var(--text-2); }
+.persona-opt.is-manage .n::before { content: "+ "; }
+
+/* --- ayarlar ---------------------------------------------------------------------- */
+
+.settings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px max(18px, calc((100% - 860px) / 2));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
 
 .panel {
-  background: var(--bg-1);
-  border: 1px solid var(--line-soft);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 16px 18px 18px;
   border-radius: var(--r);
-  padding: 14px 16px;
-  margin-bottom: 14px;
 }
-.panel h3 { font-size: 12.5px; color: var(--text-2); margin: 0; }
+.panel-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.panel-head h2 {
+  font: 600 12.5px/1 var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.panel > .muted { margin: 0 0 14px; font-size: 13px; }
+.panel code { color: var(--accent); background: var(--accent-soft); padding: 1px 5px; }
 
-/* Paneller <details>: başlığa tıklayınca açılıp kapanıyor (kullanıcı
- * isteği). Varsayılan üçgeni gizleyip yerine ASCII gösterge koyuyoruz. */
-.panel > summary {
-  display: flex; align-items: center; gap: 8px;
-  cursor: pointer; list-style: none;
-  padding-bottom: 11px;
-  user-select: none;
-}
-.panel > summary::-webkit-details-marker { display: none; }
-.panel > summary::before {
-  content: "[+]";
-  font-family: var(--mono); font-size: 11px; color: var(--text-3);
-  transition: color .12s;
-}
-.panel[open] > summary::before { content: "[-]"; color: var(--accent); }
-.panel > summary:hover::before { color: var(--text); }
-.panel:not([open]) > summary { padding-bottom: 0; }
+.row { display: flex; gap: 8px; }
 
-/* --- mail özet kuralları --- */
-.rule-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 7px 0; border-bottom: 1px solid var(--line-soft);
-}
-.rule-row:last-of-type { border-bottom: none; }
-.rule-row.is-off .rule-text { color: var(--text-3); text-decoration: line-through; }
-.rule-text { flex: 1; font-size: 12.5px; }
-.rule-form { display: flex; gap: 8px; margin-top: 10px; }
-.rule-form input { flex: 1; font-size: 12.5px; padding: 7px 10px; }
-
-/* ---------------------------------------------------------------- mail */
-
-.mail-layout {
-  /* Üst bar + (liste | detay). Kategori şeridi eskiden soldaki 186px'lik
-   * kolondaydı; kullanıcı onu üste istedi, böylece liste ve detay için
-   * daha çok yer kaldı ve sağdaki asistan dock'u hiç daralmıyor. */
-  display: grid;
-  grid-template-rows: auto 1fr;
-  height: 100%; min-height: 0;
-}
-.mail-topbar {
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-1);
-  padding: 9px 12px;
-  display: grid; gap: 8px;
-}
-.mail-tools {
-  display: flex; align-items: center; gap: 8px;
-}
-.mail-tools .mail-search { flex: 1; }
-.mail-search input { font-size: 12.5px; padding: 7px 10px; width: 100%; }
-
-/* Kategoriler: yatay sekme şeridi. Dar pencerede kaydırılıyor. */
-.mail-tabs {
-  display: flex; align-items: center; gap: 4px;
-  overflow-x: auto; padding-bottom: 2px;
-}
-.mail-tabs::-webkit-scrollbar { height: 6px; }
-.tab {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px 10px;
-  color: var(--text-2); font-size: 12.5px;
-  white-space: nowrap; flex: none;
-  border: 1px solid transparent;
-  transition: background .12s, color .12s, border-color .12s;
-}
-.tab:hover { background: var(--bg-2); color: var(--text); }
-.tab.is-active {
-  background: var(--accent-soft); color: var(--accent);
-  border-color: var(--accent-line); font-weight: 500;
-}
-.tab .dot { width: 7px; height: 7px; flex: none; }
-.tab .n { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.tab.is-active .n { color: var(--accent); }
-.tab-sep { width: 1px; height: 18px; background: var(--line); flex: none; margin: 0 4px; }
-
-/* Seçim varken kategorilerin YERİNE bu şerit gelir. */
-.mail-bulk {
-  display: flex; align-items: center; gap: 6px;
-  flex-wrap: wrap;
-}
-.bulk-count {
-  font-family: var(--mono); font-size: 12px;
-  color: var(--accent); margin-right: 4px;
-}
-.bulk-sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
-
-.mail-panes {
-  display: grid;
-  grid-template-columns: 340px 1fr;
-  min-height: 0;
-}
-
-.mail-list { border-right: 1px solid var(--line-soft); overflow-y: auto; min-height: 0; }
-.mail-item {
-  padding: 11px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  cursor: pointer;
-  transition: background .12s;
-  border-left: 2.5px solid transparent;
-}
-.mail-item:hover { background: var(--bg-1); }
-.mail-item.is-active { background: var(--bg-2); border-left-color: var(--accent); }
-.mail-item.is-unread .subj { color: var(--text); font-weight: 600; }
-.mail-item.is-unread .from { color: var(--text-2); }
-.mail-row { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
-.mail-item .from {
-  font-size: 12.5px; color: var(--text-3); flex: 1;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.mail-item .when { font-size: 10.5px; color: var(--text-3); flex: none; }
-.mail-item .subj {
-  font-size: 13px; color: var(--text-2); margin-bottom: 3px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.mail-item .snip {
-  font-size: 11.5px; color: var(--text-3); line-height: 1.4;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.mail-item .marks { display: flex; gap: 4px; align-items: center; flex: none; font-size: 11px; }
-.unread-dot { width: 7px; height: 7px; border-radius: 0; background: var(--accent); flex: none; }
-
-.cat {
-  padding: 1.5px 7px; border-radius: 0;
-  font-size: 10px; font-weight: 600; flex: none;
-  border: 1px solid transparent;
-}
-.cat-toplanti { background: #8b6bff22; color: #b8a3ff; border-color: #8b6bff44; }
-.cat-is       { background: #5b8cff22; color: #9dbaff; border-color: #5b8cff44; }
-.cat-fatura   { background: #eab24a22; color: #f0cb85; border-color: #eab24a44; }
-.cat-bulten   { background: #4fb6e022; color: #96d6ef; border-color: #4fb6e044; }
-.cat-bildirim { background: #7a879d22; color: #aab4c6; border-color: #7a879d44; }
-.cat-kisisel  { background: #34c98a22; color: #83dfb8; border-color: #34c98a44; }
-.cat-diger    { background: var(--bg-3); color: var(--text-3); border-color: var(--line); }
-
-.mail-detail { overflow-y: auto; min-height: 0; padding: 0; }
-/* Başlık barı: yapışkan ve KÜÇÜLEBİLİR.
- *
- * Tam hâlde ~180px yer kaplıyordu ve uzun maillerde gövdeye çok az yer
- * kalıyordu (kullanıcı bildirdi). `is-compact` sınıfı gönderen bloğunu,
- * kategori gerekçesini ve araç satırını gizleyip barı tek satıra indiriyor.
- * Geçiş animasyonlu ki ne olduğu anlaşılsın. */
-.mail-detail-head {
-  padding: 18px 22px 15px;
-  border-bottom: 1px solid var(--line-soft);
-  position: sticky; top: 0; background: var(--bg-0); z-index: 2;
-  transition: padding .18s ease;
-}
-.mail-detail-head h2 { transition: font-size .18s ease; }
-
-.mail-detail-head.is-compact { padding: 8px 22px 6px; }
-.mail-detail-head.is-compact h2 { font-size: 13.5px; margin-bottom: 0; }
-.mail-detail-head.is-compact .mail-from,
-.mail-detail-head.is-compact .mail-actions,
-.mail-detail-head.is-compact .cat-reason,
-.mail-detail-head.is-compact .code-card { display: none; }
-.mail-detail-head.is-compact .mail-nav { margin-bottom: 4px; }
-.mail-detail-head.is-compact .head-toggle .chev { transform: rotate(180deg); }
-
-.cat-reason { margin-top: 9px; }
-
-/* Barın SAĞ ALT köşesinde küçültme/büyütme düğmesi. */
-.head-toggle {
-  position: absolute; right: 10px; bottom: -1px;
-  width: 26px; height: 16px;
-  display: grid; place-items: center;
-  background: var(--bg-2); border: 1px solid var(--line);
-  color: var(--text-3);
-  transition: background .12s, color .12s;
-}
-.head-toggle:hover { background: var(--bg-hover); color: var(--text); }
-.head-toggle .chev { font-size: 8px; line-height: 1; transition: transform .18s ease; }
-.mail-detail-head h2 { font-size: 17px; line-height: 1.35; margin-bottom: 9px; }
-.mail-from { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.avatar {
-  width: 34px; height: 34px; border-radius: 0; flex: none;
-  display: grid; place-items: center; font-weight: 600; font-size: 13px; color: #fff;
-}
-.mail-from .who { font-size: 13px; }
-.mail-from .addr { font-size: 11.5px; color: var(--text-3); }
-.mail-tools { display: flex; gap: 6px; flex-wrap: wrap; }
-.mail-body { padding: 18px 22px 40px; }
-/* Düz metin gövdesi (HTML'i olmayan mailler) */
-.mail-body-text {
-  font-size: 13.5px; line-height: 1.65; color: var(--text-2);
-  white-space: pre-wrap; word-break: break-word;
-}
-/* HTML gövdesi: kum havuzu iframe'i. Yükseklik içeriğe göre ayarlanıyor
- * (mailbody.js) — iframe kendi kaydırma çubuğunu açarsa fare tekerleği
- * orada takılıyor ve dış panel kaymıyor. */
-.mail-frame {
-  width: 100%; border: 0; display: block;
-  min-height: 120px; background: transparent;
-  overflow: hidden;
-}
-.mail-imgbar {
-  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
-  margin-bottom: 14px; padding: 9px 12px;
-  border-radius: var(--r-sm);
-  background: var(--warn-soft); border: 1px solid #eab24a33;
-  color: #f0cb85; font-size: 12px;
-}
-.summary-card {
-  margin: 14px 22px 0;
-  padding: 13px 15px;
-  border-radius: var(--r);
-  background: linear-gradient(140deg, #5b8cff14, #8b6bff10);
-  border: 1px solid var(--accent-line);
-}
-.summary-card h4 { font-size: 11.5px; color: var(--accent); margin-bottom: 7px; letter-spacing: .02em; }
-.summary-card div { font-size: 13px; color: var(--text-2); white-space: pre-wrap; }
-
-.invite-card {
-  margin: 14px 22px 0; padding: 13px 15px;
-  border-radius: var(--r);
-  background: #8b6bff14; border: 1px solid #8b6bff44;
-}
-.invite-card h4 { font-size: 11.5px; color: #b8a3ff; margin-bottom: 8px; }
-.invite-row { font-size: 12.5px; color: var(--text-2); margin-bottom: 4px; }
-
-/* ---------------------------------------------------------------- takvim */
-
-.cal-layout { display: grid; grid-template-columns: 1fr 296px; height: 100%; min-height: 0; }
-.cal-main { display: grid; grid-template-rows: auto 1fr; min-height: 0; padding: 14px 16px 16px; }
-.cal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.cal-nav { display: flex; align-items: center; gap: 6px; }
-.cal-nav h2 { font-size: 15px; min-width: 158px; text-align: center; }
-.cal-actions { display: flex; gap: 7px; }
-
-.cal-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: minmax(0, 1fr);
-  gap: 1px;
-  background: var(--line-soft);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r);
-  overflow: hidden;
-  min-height: 0;
-}
-.cal-dow {
-  background: var(--bg-1); padding: 7px 9px;
-  font-size: 10.5px; font-weight: 600; color: var(--text-3);
-  text-transform: uppercase; letter-spacing: .05em;
-}
-.cal-cell {
-  background: var(--bg-0); padding: 5px 6px;
-  min-height: 0; overflow: hidden;
-  display: flex; flex-direction: column; gap: 3px;
-  cursor: pointer; transition: background .12s;
-}
-.cal-cell:hover { background: var(--bg-1); }
-.cal-cell.is-out { background: #0a0d13; }
-.cal-cell.is-out .n { color: #3b4457; }
-.cal-cell.is-today .n {
-  background: var(--accent); color: #fff;
-  width: 21px; height: 21px; border-radius: 0;
-  display: grid; place-items: center;
-}
-.cal-cell.is-selected { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent-line); }
-.cal-cell .n { font-size: 11.5px; color: var(--text-2); font-weight: 500; flex: none; }
-.cal-ev {
-  font-size: 10.5px; padding: 2px 6px; border-radius: 0;
-  background: var(--accent-soft); color: #bcd0ff;
-  border-left: 2px solid var(--accent);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  flex: none;
-}
-.cal-ev.from-mail { background: #8b6bff1c; color: #c1b0ff; border-left-color: var(--accent-2); }
-.cal-more { font-size: 10px; color: var(--text-3); padding-left: 6px; }
-
-.cal-side { border-left: 1px solid var(--line-soft); overflow-y: auto; padding: 14px 13px; min-height: 0; }
-
-.ev-item {
-  padding: 10px 12px; border-radius: var(--r-sm);
-  background: var(--bg-1); border: 1px solid var(--line-soft);
-  margin-bottom: 8px;
-}
-.ev-item .t { font-size: 13px; font-weight: 500; margin-bottom: 3px; }
-.ev-item .w { font-size: 11.5px; color: var(--accent); margin-bottom: 4px; }
-.ev-item .d { font-size: 11.5px; color: var(--text-3); }
-.ev-item .acts { display: flex; gap: 5px; margin-top: 8px; }
-
-.pending-item {
-  padding: 10px 12px; border-radius: var(--r-sm);
-  background: #8b6bff10; border: 1px solid #8b6bff33;
-  margin-bottom: 8px;
-}
-.pending-item .t { font-size: 12.5px; font-weight: 500; margin-bottom: 3px; }
-.pending-item .w { font-size: 11.5px; color: #b8a3ff; }
-.pending-item .c { font-size: 10.5px; color: var(--text-3); margin-top: 3px; }
-
-/* ---------------------------------------------------------------- kota */
-
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(276px, 1fr)); gap: 12px; }
-.qcard {
-  background: var(--bg-1); border: 1px solid var(--line-soft);
-  border-radius: var(--r); padding: 14px 15px;
-}
-.qcard.is-down { border-color: #f4626f33; }
-.qcard-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.qcard-head .name { font-size: 14px; font-weight: 600; flex: 1; }
-.qcard .model { font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-bottom: 12px; }
-.qwin { margin-bottom: 10px; }
-.qwin-top { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); margin-bottom: 4px; }
-.qbar { height: 5px; border-radius: 0; background: var(--bg-3); overflow: hidden; }
-.qbar i { display: block; height: 100%; border-radius: 0; transition: width .3s; }
-.qcard-foot { display: flex; gap: 6px; margin-top: 12px; }
-
-.bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
-.bar-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 1.5px; min-width: 0; }
-.bar-seg { border-radius: 0; min-height: 2px; }
-.bar-lbl { font-size: 9.5px; color: var(--text-3); text-align: center; margin-top: 5px; }
-.legend { display: flex; gap: 13px; margin-top: 13px; flex-wrap: wrap; }
-.legend span { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-3); }
-.legend i { width: 9px; height: 9px; border-radius: 0; }
-
-/* ---------------------------------------------------------------- geçmiş */
-
-.history-layout { display: grid; grid-template-columns: 320px 1fr; gap: 14px; align-items: start; }
-.history-list { display: grid; gap: 6px; max-height: calc(100vh - 190px); overflow-y: auto; }
-.hist-item {
-  padding: 10px 12px; border-radius: var(--r-sm);
-  background: var(--bg-1); border: 1px solid var(--line-soft);
-  cursor: pointer; text-align: left; width: 100%;
-  transition: all .12s;
-}
-.hist-item:hover { border-color: var(--line-strong); background: var(--bg-2); }
-.hist-item.is-active { border-color: var(--accent-line); background: var(--accent-soft); }
-.hist-item .t { font-size: 12.5px; margin-bottom: 3px; color: var(--text-2); }
-.hist-item .m { font-size: 10.5px; color: var(--text-3); }
-.history-detail { max-height: calc(100vh - 190px); overflow-y: auto; }
-.hist-msg { padding: 9px 12px; border-radius: var(--r-sm); margin-bottom: 7px; font-size: 12.5px; }
-.hist-msg.role-user { background: var(--accent-soft); border: 1px solid var(--accent-line); }
-.hist-msg.role-assistant { background: var(--bg-1); border: 1px solid var(--line-soft); }
-.hist-msg.role-tool { background: var(--bg-2); border: 1px solid var(--line-soft); font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
-.hist-msg .r { font-size: 10px; color: var(--text-3); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .05em; }
-.hist-msg .c { white-space: pre-wrap; word-break: break-word; }
-
-/* ---------------------------------------------------------------- modal */
-
-.modal-backdrop {
-  position: fixed; inset: 0; z-index: 90;
-  background: #05070bcc;
-  display: grid; place-items: center;
-  padding: 22px;
-  animation: fade .14s;
-}
-@keyframes fade { from { opacity: 0; } }
-.modal {
-  width: min(560px, 100%);
-  max-height: 86vh; overflow-y: auto;
-  background: var(--bg-1);
+input, textarea.field {
+  background: #020403;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow);
-  animation: pop .16s ease-out;
-}
-@keyframes pop { from { opacity: 0; transform: scale(.97) translateY(6px); } }
-.modal-head { padding: 17px 20px 13px; border-bottom: 1px solid var(--line-soft); }
-.modal-head h3 { font-size: 15px; margin-bottom: 4px; }
-.modal-head p { margin: 0; font-size: 12.5px; color: var(--text-3); }
-.modal-body { padding: 16px 20px; }
-.modal-foot {
-  padding: 13px 20px 16px; border-top: 1px solid var(--line-soft);
-  display: flex; gap: 8px; justify-content: flex-end;
-}
-/* Hesap ekleme diyaloğu — Google yolu önde durur */
-.google-cta { margin-bottom: 4px; }
-.google-cta .muted { margin-top: 9px; font-size: 11.5px; line-height: 1.55; }
-
-/* Google'ın marka rehberi beyaz zemin + koyu metin istiyor; koyu arayüzde
- * bile bu düğmeyi ayırt edilebilir tutuyoruz. */
-.btn-google {
-  background: #fff; color: #1f1f1f;
-  border: 1px solid #dadce0;
-  font-weight: 500; font-size: 14px;
-  padding: 11px 16px; gap: 11px;
-}
-.btn-google:hover:not(:disabled) { background: #f4f6f9; border-color: #c9cdd3; }
-.btn-google:disabled { background: #2a3040; color: var(--text-3); border-color: var(--line); }
-.btn-google .g-logo { display: grid; place-items: center; width: 19px; height: 19px; flex: none; }
-.btn-google .g-logo svg { width: 19px; height: 19px; }
-.btn-google:disabled .g-logo { opacity: .45; filter: grayscale(1); }
-
-/* Etiket satırı: solda alan adı, sağda yardımcı bağlantı */
-.label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.inline-link {
-  background: none; border: none; padding: 0;
-  color: var(--accent); font-size: 11.5px; font-weight: 500;
-  text-decoration: underline; text-underline-offset: 2px;
-  cursor: pointer;
-}
-.inline-link:hover { color: #86aaff; }
-
-.modal-inline-foot {
-  display: flex; gap: 8px; justify-content: flex-end;
-  margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-soft);
-}
-
-/* OAuth beklerken gösterilen adım listesi */
-.oauth-steps { display: grid; gap: 7px; margin-top: 9px; }
-.oauth-steps li {
-  display: flex; gap: 9px; align-items: flex-start;
-  font-size: 12.5px; color: var(--text-2); list-style: none;
-}
-.oauth-steps li b {
-  flex: none; width: 18px; height: 18px; border-radius: 0;
-  background: var(--bg-3); color: var(--text-3);
-  font-size: 10.5px; font-weight: 700; display: grid; place-items: center;
-}
-.oauth-steps li.now b { background: var(--accent); color: #fff; }
-.oauth-steps li.now { color: var(--text); }
-.or-line {
-  display: flex; align-items: center; gap: 12px;
-  margin: 16px 0 14px; color: var(--text-3); font-size: 11.5px;
-}
-.or-line::before, .or-line::after {
-  content: ""; flex: 1; height: 1px; background: var(--line);
-}
-
-.kv { display: grid; grid-template-columns: 92px 1fr; gap: 6px 12px; font-size: 12.5px; margin-bottom: 13px; }
-.kv dt { color: var(--text-3); }
-.kv dd { margin: 0; word-break: break-word; }
-.modal pre {
-  background: var(--bg-0); border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm); padding: 11px 13px; margin: 0;
-  font-family: var(--mono); font-size: 11.5px;
-  max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word;
-}
-
-/* ---------------------------------------------------------------- toast */
-
-.toasts {
-  position: fixed; bottom: 18px; right: 18px; z-index: 95;
-  display: grid; gap: 8px; max-width: 380px;
-}
-.toast {
-  padding: 11px 15px; border-radius: var(--r);
-  background: var(--bg-2); border: 1px solid var(--line-strong);
-  box-shadow: var(--shadow); font-size: 12.5px;
-  animation: slidein .18s ease-out;
-}
-@keyframes slidein { from { opacity: 0; transform: translateX(18px); } }
-.toast.is-ok { border-color: #34c98a55; }
-.toast.is-err { border-color: #f4626f55; color: #ffb8be; }
-.toast b { display: block; margin-bottom: 2px; font-size: 12.5px; }
-.toast span { color: var(--text-3); }
-
-.spin {
-  width: 13px; height: 13px; flex: none;
-  border: 2px solid var(--line-strong); border-top-color: var(--accent);
-  border-radius: 0; animation: spin .7s linear infinite;
-  display: inline-block; vertical-align: -2px;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* dar pencere: dock ve yan paneller daralır */
-@media (max-width: 1240px) {
-  :root { --dock-w: 310px; }
-  .mail-panes { grid-template-columns: 292px 1fr; }
-  .cal-layout { grid-template-columns: 1fr 250px; }
-}
-@media (max-width: 1060px) {
-  /* Dar pencerede tek kolon: liste ya da detay, ikisi birden değil. */
-  .mail-panes { grid-template-columns: 1fr; }
-  .mail-detail { display: none; }
-  .mail-layout.show-detail .mail-list { display: none; }
-  .mail-layout.show-detail .mail-detail { display: block; }
-}
-
-/* Mail listesindeki seçim kutusu — sadece üzerine gelince ya da seçiliyken
- * belirginleşiyor, yoksa liste onlarca kutuyla gürültülü görünüyor. */
-/* Seçim kutusu ASCII: [ ] / [X]. Native checkbox tarayıcının kendi
- * yuvarlak/mavi çizimini kullanıyordu ve temayla hiç uyuşmuyordu; üstelik
- * kullanıcının teması onu boyayamıyordu. Gerçek `<input>` DURUYOR (klavye
- * ve erişilebilirlik için), sadece görsel olarak gizlenip yerine metin
- * çiziliyor. */
-.mail-check { display: flex; align-items: center; flex: none; cursor: pointer; }
-.mail-check input {
-  position: absolute; opacity: 0; width: 0; height: 0; margin: 0;
-}
-.mail-check .box::before {
-  content: "[ ]";
-  font-family: var(--mono); font-size: 12px;
-  color: var(--text-3); letter-spacing: -.04em;
-}
-.mail-check input:checked + .box::before { content: "[X]"; color: var(--accent); }
-.mail-check:hover .box::before { color: var(--text-2); }
-.mail-check input:focus-visible + .box::before { outline: 1px solid var(--accent); }
-.mail-item.is-checked { background: var(--accent-soft); }
-
-/* Detay üstü gezinme: önceki / sonraki / kapat */
-.mail-nav { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
-.mail-nav .icon-btn:disabled { opacity: .35; cursor: default; }
-
-/* Kategori rozeti mail alanının SOL ÜSTÜNDE; gezinme düğmeleri sağda. */
-.mail-nav .cat { padding: 4px 10px; }
-.mail-nav .nav-gap { flex: 1; }
-
-.mail-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-
-/* Aktivasyon kodu kartı — kodu aramaya gerek kalmasın. */
-.code-card {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 14px; margin: 10px 0;
-  background: var(--bg-3); border: 1px solid var(--line-strong);
-}
-.code-label { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
-.code-value {
-  font-family: var(--mono); font-size: 20px; font-weight: 700;
-  letter-spacing: .12em; color: var(--text);
-}
-
-/* HTML mail "kağıdı": gönderenin tasarladığı beyaz zeminde durur
- * (bkz. mailbody.js) — koyu arayüzde bir kart gibi görünsün. */
-.mail-frame {
-  background: #fff;
   border-radius: var(--r);
-  box-shadow: 0 2px 14px -6px #0009;
+  padding: 9px 11px;
+  outline: none;
 }
+input:focus, textarea.field:focus { border-color: var(--accent); }
+#model-input { flex: 1; font-family: var(--mono); font-size: 13px; }
 
-/* --- sohbette markdown tablosu ve resim (web araştırma çıktısı) --- */
-.md-table-wrap {
-  overflow-x: auto;
-  margin: 10px 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-}
-.md-table {
-  border-collapse: collapse;
-  /* `width: 100%` DEĞİL: sütunlar içeriğe göre genişlesin, tablo panelden
-   * taşarsa `.md-table-wrap` zaten yatay kaydırıyor. Sabit %100'de üst üste
-   * 7 sütunlu bir karşılaştırma tablosunda ilk sütun eziliyordu ve
-   * `.msg-bot .body`den miras gelen `word-break: break-word` ürün adını
-   * ortadan bölüyordu ("Ra / zer Barra / cuda X"). */
-  width: auto;
-  min-width: 100%;
-  font-size: 12.5px;
-}
-.md-table th, .md-table td {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line-soft);
-  text-align: left;
-  vertical-align: top;
-  /* Kelime ancak hücreye TEK BAŞINA sığmıyorsa bölünsün (uzun adresler);
-   * normal kelimeler bölünmesin. */
-  word-break: normal;
-  overflow-wrap: break-word;
-}
-/* Ürün adı sütunu okunaklı kalsın; geri kalanı içeriğe göre. */
-.md-table td:first-child, .md-table th:first-child { min-width: 132px; }
-.md-table th {
-  background: var(--bg-3);
-  color: var(--text);
-  font-weight: 600;
-  white-space: nowrap;
-  position: sticky; top: 0;
-}
-.md-table tbody tr:last-child td { border-bottom: none; }
-.md-table tbody tr:hover { background: var(--bg-1); }
-.md-table td:first-child { color: var(--text); font-weight: 500; }
-
-.md-img {
-  max-width: 260px; max-height: 200px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  margin: 6px 8px 6px 0;
-  vertical-align: top;
-  background: var(--bg-1);
-}
-
-/* ==========================================================================
-   HAREKET — "her şey çok statik duruyor" (kullanıcı isteği)
-   ==========================================================================
-
-   Üç kural:
-   1. Hiçbir efekt okumayı zorlaştırmayacak. Işıklar KENARLARDA döner,
-      metnin üstünde değil.
-   2. Her efektin bir işi var: neyin aktif olduğunu, neyin çalıştığını,
-      neyin yeni geldiğini gösterir. Süs için hareket yok.
-   3. `prefers-reduced-motion` açıksa hepsi susar (en altta).             */
-
-/* --- aktif sekmenin etrafında dönen ışık ---------------------------------
- *
- * Kullanıcının istediği efekt (Odysseus AI'daki gibi): kenarda dolaşan bir
- * parıltı. Tek bir konik gradyan döndürülüyor; içteki dolgu katmanı onu
- * maskelediği için yalnızca 1px'lik çerçeve parlıyor. */
-@property --spin {
-  syntax: "<angle>"; inherits: false; initial-value: 0deg;
-}
-
-.tab.is-active, .rail-btn.is-active {
-  position: relative;
-  isolation: isolate;
-}
-.tab.is-active::after, .rail-btn.is-active::after {
-  content: "";
-  position: absolute; inset: -1px;
-  padding: 1px;
-  background: conic-gradient(
-    from var(--spin),
-    transparent 0deg, transparent 250deg,
-    var(--accent) 300deg, #fff 320deg, var(--accent) 340deg,
-    transparent 360deg
-  );
-  /* Yalnızca çerçeve görünsün: iç alanı maskele. */
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  animation: spin-border 3.2s linear infinite;
-  pointer-events: none;
-  z-index: -1;
-}
-@keyframes spin-border { to { --spin: 360deg; } }
-
-/* --- görünüm geçişi ------------------------------------------------------ */
-.view.is-active { animation: view-in .22s ease-out; }
-@keyframes view-in {
-  from { opacity: 0; transform: translateY(6px); }
-}
-
-/* --- mail listesi: sırayla belirme --------------------------------------- */
-.mail-item { animation: row-in .2s ease-out backwards; }
-.mail-item:nth-child(1) { animation-delay: .00s; }
-.mail-item:nth-child(2) { animation-delay: .02s; }
-.mail-item:nth-child(3) { animation-delay: .04s; }
-.mail-item:nth-child(4) { animation-delay: .06s; }
-.mail-item:nth-child(5) { animation-delay: .08s; }
-.mail-item:nth-child(6) { animation-delay: .10s; }
-.mail-item:nth-child(7) { animation-delay: .12s; }
-.mail-item:nth-child(8) { animation-delay: .14s; }
-@keyframes row-in {
-  from { opacity: 0; transform: translateX(-6px); }
-}
-
-/* Okunmamış nokta nefes alsın — göz oraya gitsin. */
-.unread-dot { animation: pulse-dot 2.4s ease-in-out infinite; }
-@keyframes pulse-dot {
-  50% { opacity: .45; transform: scale(.82); }
-}
-
-/* --- düğmeler: bastırınca geri bildirim ---------------------------------- */
-.btn, .icon-btn, .tab, .rail-btn { transition: transform .09s ease, background .12s, color .12s; }
-.btn:active, .icon-btn:active, .tab:active { transform: translateY(1px); }
-
-/* --- ajan çalışırken: terminal imleci ------------------------------------ */
-.msg-bot .body.cursor::after {
-  content: "▌";
+.btn {
+  font: 600 11.5px/1 var(--mono);
+  letter-spacing: 0.08em;
+  padding: 9px 14px;
   color: var(--accent);
-  animation: blink-caret 1s steps(2, start) infinite;
-  margin-left: 1px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  border-radius: var(--r);
 }
-@keyframes blink-caret { 50% { opacity: 0; } }
+.btn:hover { background: rgba(61, 255, 138, 0.18); }
+.btn-plus {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.btn-danger { color: var(--danger); border-color: rgba(255, 92, 108, 0.4); background: transparent; }
+.btn-danger:hover { background: var(--danger-soft); }
+.btn-danger.is-armed { background: var(--danger); color: #200; }
+.btn-ghost { color: var(--text-2); border-color: var(--line-strong); background: transparent; }
+.btn-ghost:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 
-/* --- araç kartı çalışırken: ASCII çevirici ------------------------------- */
-.tool .spin { display: inline-block; width: 1ch; text-align: center; }
-.tool .spin::before {
-  content: "|";
-  font-family: var(--mono);
+.status { margin: 8px 0 0; font: 11.5px/1.4 var(--mono); color: var(--text-3); min-height: 1.4em; }
+.status.is-ok { color: var(--accent); }
+.status.is-bad { color: var(--danger); }
+
+.persona-list { display: flex; flex-direction: column; gap: 12px; }
+.persona-card {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.persona-card.is-active { border-color: var(--accent-line); }
+.persona-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.persona-card-head .idx { font: 11px/1 var(--mono); color: var(--text-3); }
+.persona-card-head input {
+  flex: 1;
+  font: 600 13px/1.2 var(--mono);
+  letter-spacing: 0.03em;
+  padding: 7px 9px;
+}
+.badge {
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.1em;
+  padding: 5px 7px;
+  border: 1px solid var(--accent-line);
   color: var(--accent);
-  animation: ascii-spin .32s steps(1) infinite;
+  background: var(--accent-soft);
 }
-@keyframes ascii-spin {
-  0%   { content: "|"; }
-  25%  { content: "/"; }
-  50%  { content: "-"; }
-  75%  { content: "\\"; }
+.persona-card textarea.field {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 12px;
+  min-height: 130px;
+  resize: vertical;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.persona-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+.persona-card-foot .status { margin: 0; flex: 1; }
+
+/* --- dar ekran ------------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; gap: 10px; }
+  .topbar-right { margin-left: 0; width: 100%; }
+  #chip-model { display: none; }
+  .hint { display: none; }
+  .composer-foot { justify-content: flex-end; }
+  .msg-user { max-width: 92%; }
+  .banner { font-size: 9px; }
 }
 
-/* --- "çalışıyor" rozeti: tarayıcı çizgisi -------------------------------- */
-.chip-dot.is-busy {
-  background-image: linear-gradient(90deg, transparent, var(--accent-soft), transparent);
-  background-size: 200% 100%;
-  animation: scan 1.4s linear infinite;
-}
-@keyframes scan { to { background-position: -200% 0; } }
-
-/* --- bildirim baloncuğu -------------------------------------------------- */
-.toast { animation: toast-in .2s ease-out; }
-@keyframes toast-in {
-  from { opacity: 0; transform: translateX(14px); }
-}
-
-/* --- ayarlar panelleri açılırken ----------------------------------------- */
-.panel[open] > *:not(summary) { animation: view-in .18s ease-out; }
-
-/* --- hareket istemeyenler ------------------------------------------------
- * Sistem "hareketi azalt" diyorsa hepsi susar; arayüz yine çalışır. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: .001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .001ms !important;
-  }
-}
-
-/* ============================================================== OTOMASYON */
-
-.auto-layout {
-  display: grid;
-  /* sol panel | ayırıcı | tarayıcı — orta sütun sürüklenebilir çubuk */
-  grid-template-columns: 420px 6px 1fr;
-  height: 100%; min-height: 0;
-}
-
-/* Sürüklenebilir ayırıcı. Genişlik `localStorage`da tutuluyor: kullanıcı
- * her açılışta yeniden ayarlamak zorunda kalmasın. */
-.auto-splitter {
-  cursor: col-resize;
-  background: var(--line-soft);
-  transition: background .12s;
-  position: relative;
-}
-.auto-splitter:hover, .auto-splitter:active { background: var(--accent); }
-/* Tutma alanı görünenden geniş: 6px'lik bir çubuğu fareyle yakalamak zor. */
-.auto-splitter::after {
-  content: ""; position: absolute; inset: 0 -5px;
-}
-
-.auto-side {
-  display: grid;
-  /* seçim | sohbet | yazma | adım başlığı | adımlar */
-  grid-template-rows: auto 1fr auto auto minmax(120px, 40%);
-  border-right: 1px solid var(--line-soft);
-  min-height: 0;
-}
-
-.auto-picker {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 12px; border-bottom: 1px solid var(--line-soft);
-}
-.auto-select {
-  flex: 1; background: var(--bg-2); color: var(--text);
-  border: 1px solid var(--line); padding: 6px 8px;
-  font-family: var(--mono); font-size: 12px;
-}
-
-.auto-chat { overflow-y: auto; padding: 12px; min-height: 0; }
-.auto-msg {
-  padding: 8px 11px; margin-bottom: 8px;
-  border: 1px solid var(--line-soft); background: var(--bg-2);
-  font-size: 12.5px; white-space: pre-wrap;
-}
-.auto-msg.role-user { background: var(--accent-soft); border-color: var(--accent-line); }
-
-.auto-approval {
-  border: 1px solid var(--warn); background: var(--warn-soft);
-  padding: 10px 11px; margin-bottom: 8px; font-size: 12.5px;
-}
-.auto-approval .what {
-  font-family: var(--mono); font-size: 11.5px;
-  color: var(--text-2); margin-top: 5px;
-}
-.auto-approval .row { display: flex; gap: 6px; margin-top: 9px; }
-
-.auto-form { padding: 10px 12px; border-top: 1px solid var(--line-soft); }
-
-.auto-steps-head {
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 12px;
-  border-top: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-1);
-  font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
-}
-.auto-steps-head .btn { margin-left: auto; }
-.auto-steps-head .btn + .btn { margin-left: 0; }
-.auto-stepwise { display: flex; align-items: center; gap: 5px; cursor: pointer; }
-.auto-stepwise input { position: absolute; opacity: 0; width: 0; height: 0; }
-.auto-stepwise .box::before {
-  content: "[ ]"; font-family: var(--mono); color: var(--text-3);
-}
-.auto-stepwise input:checked + .box::before { content: "[X]"; color: var(--accent); }
-
-.auto-steps { overflow-y: auto; padding: 8px 12px 14px; min-height: 0; }
-.auto-step {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  align-items: start; gap: 7px;
-  padding: 7px 8px; margin-bottom: 4px;
-  border: 1px solid transparent;
-  font-size: 12.5px;
-  transition: background .12s, border-color .12s;
-}
-.auto-step:hover { background: var(--bg-2); border-color: var(--line-soft); }
-.auto-step .mark { font-family: var(--mono); color: var(--text-3); }
-.auto-step .n { font-family: var(--mono); color: var(--text-3); }
-.auto-step .intent { line-height: 1.45; }
-.auto-step .tools { display: flex; gap: 2px; opacity: 0; transition: opacity .12s; }
-.auto-step:hover .tools { opacity: 1; }
-.auto-step .detail {
-  grid-column: 3 / -1;
-  font-family: var(--mono); font-size: 11px; color: var(--text-3);
-  margin-top: 4px; overflow-wrap: anywhere;
-}
-.auto-step .detail.err { color: var(--danger); }
-
-.auto-step.is-calisiyor { background: var(--accent-soft); border-color: var(--accent-line); }
-.auto-step.is-calisiyor .mark { color: var(--accent); animation: blink-caret 1s steps(2) infinite; }
-.auto-step.is-tamam .mark { color: var(--ok); }
-.auto-step.is-hata { border-color: var(--danger); background: var(--danger-soft); }
-.auto-step.is-hata .mark { color: var(--danger); }
-.auto-step.is-atlandi { opacity: .55; }
-
-/* --- sağ taraf: canlı tarayıcı --- */
-.auto-view { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
-.auto-toolbar {
-  display: flex; align-items: center; gap: 7px;
-  padding: 9px 12px; border-bottom: 1px solid var(--line-soft);
-  background: var(--bg-1);
-}
-.auto-url {
-  flex: 1; background: var(--bg-2); color: var(--text);
-  border: 1px solid var(--line); padding: 6px 9px;
-  font-family: var(--mono); font-size: 12px;
-}
-.auto-screen {
-  overflow: auto; min-height: 0;
-  background: var(--bg-0);
-  display: grid; place-items: start center;
-  padding: 12px;
-}
-.auto-screen img {
-  max-width: 100%; border: 1px solid var(--line);
-  cursor: crosshair;
-}
-.auto-screen img:focus-visible { outline: 2px solid var(--accent); }
-.auto-empty { align-self: center; text-align: center; color: var(--text-2); }
-
-@media (max-width: 1180px) {
-  .auto-layout { grid-template-columns: 340px 6px 1fr; }
-}
-
-
-/* Uygulama içi form diyaloğu (sistem `prompt`u yerine). */
-.dlg-field { display: block; margin-bottom: 14px; }
-.dlg-field > span { display: block; font-size: 12.5px; margin-bottom: 4px; }
-.dlg-field > em {
-  display: block; font-style: normal;
-  font-size: 11.5px; color: var(--text-3); margin-bottom: 6px;
-}
-.dlg-field input {
-  width: 100%; background: var(--bg-2); color: var(--text);
-  border: 1px solid var(--line); padding: 8px 10px;
-  font-family: var(--mono); font-size: 12.5px;
-}
-.dlg-field input:focus { outline: none; border-color: var(--accent); }
-
-/* Diyalogdaki liste alanı: her satır bir site (virgülle ayırmak yerine). */
-.dlg-list { display: grid; gap: 6px; margin-bottom: 8px; }
-.dlg-row { display: flex; gap: 6px; align-items: center; }
-.dlg-row input {
-  flex: 1; background: var(--bg-2); color: var(--text);
-  border: 1px solid var(--line); padding: 7px 9px;
-  font-family: var(--mono); font-size: 12.5px;
-}
-.dlg-row input:focus { outline: none; border-color: var(--accent); }
-
-/* Açık sekmeler seçicisi — birden fazla sekme varken görünür. */
-.auto-tabs {
-  max-width: 220px;
-  background: var(--bg-2); color: var(--text-2);
-  border: 1px solid var(--line); padding: 5px 7px;
-  font-family: var(--mono); font-size: 11.5px;
-}
-
-
-/* Adım türü rozeti — listede bir bakışta ne yaptığı anlaşılsın. */
-.kind {
-  display: inline-block;
-  font-family: var(--mono); font-size: 10px;
-  padding: 1px 5px; margin-right: 6px;
-  border: 1px solid var(--line); color: var(--text-3);
-  vertical-align: 1px;
-}
-.kind-sayfa { color: var(--info); border-color: #4fb6e055; }
-.kind-oku { color: var(--ok); border-color: #34c98a55; }
-.kind-yaz { color: var(--warn); border-color: #eab24a55; }
-.kind-tikla { color: var(--accent); border-color: var(--accent-line); }
-.kind-kontrol { color: var(--accent-2); border-color: #8b6bff55; }
-
-/* Canlı ilerleme günlüğü: ne yaptığı ve nerede takıldığı. */
-.auto-log {
-  font-family: var(--mono); font-size: 11px;
-  color: var(--text-3); padding: 2px 0;
-  border-left: 2px solid var(--line); padding-left: 8px;
-  margin-bottom: 2px; overflow-wrap: anywhere;
-}
-.auto-log.is-err { color: var(--danger); border-left-color: var(--danger); }
-
-.dlg-field select {
-  width: 100%; background: var(--bg-2); color: var(--text);
-  border: 1px solid var(--line); padding: 7px 9px;
-  font-family: var(--mono); font-size: 12.5px;
+  .spinner .verb { animation: none; color: var(--accent); background: none; }
+  .cursor { animation: none; }
 }

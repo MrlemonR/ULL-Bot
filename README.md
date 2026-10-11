@@ -1,498 +1,54 @@
-# ULL-Bot — Personal AI Orchestrator
+# ULL-Bot
 
-A personal agent that runs entirely on free-tier LLM providers and can act on
-your machine (files, commands, web lookups). For the full spec see
-[ORCHESTRATOR_SPEC.md](./ORCHESTRATOR_SPEC.md) (written in Turkish), and for
-implementation decisions made along the way see [DECISIONS.md](./DECISIONS.md).
-Picking the work back up in a fresh session? Start at
-[NEXT_PHASE.md](./NEXT_PHASE.md).
+Lokal yapay zekâ modelleriyle (Ollama) konuşmak için terminal havasında,
+köşeli bir sohbet arayüzü. Arkada Japonca karakterlerle Matrix yağmuru akar.
 
-Current status: **Phase 9 — web research on top of the desktop app, mail and
-calendar** (phases 1-7 are the spec's; 8 and 9 are the UI work that followed).
-Newest surface: [FAZ9_TESLIM.md](./FAZ9_TESLIM.md) (web search, spam, HTML
-mail). Desktop app / mail / calendar: [FAZ8_TESLIM.md](./FAZ8_TESLIM.md).
-The WebSocket chat protocol is unchanged: [FAZ7_TESLIM.md](./FAZ7_TESLIM.md).
+- **Sohbet** — cevaplar Ollama'dan canlı akar. Model düşünürken üç nokta yerine
+  `■ Cooking… ░▒▓█▓▒░░ 3s` gibi bir gösterge çıkar.
+- **Kişilikler (master prompt)** — Ayarlar'da `+` ile istediğin kadar kişilik
+  ekle. Seçili kişiliğin promptu her konuşmanın başında modele sistem mesajı
+  olarak verilir.
+- **Kişilik seçici** — sohbet kutusunun sol üstündeki `◆ İSİM ▾` düğmesi.
 
-## Setup
+## Kurulum
 
-```bash
-uv sync
-cp .env.example .env
-```
+1. [Ollama](https://ollama.com/download)'yı kur ve modeli indir:
 
-Fill in at least these in `.env`:
+   ```bash
+   ollama pull qwen2.5:7b
+   ```
 
-- `LITELLM_MASTER_KEY` — any string you pick as a local password for the
-  LiteLLM proxy (replace the `changeme-local-key` placeholder).
-- At least one provider key. All three are free and none asks for a card:
-  - `OPENROUTER_API_KEY` — https://openrouter.ai/keys
-  - `GROQ_API_KEY` — https://console.groq.com/keys
-  - `GEMINI_API_KEY` — https://aistudio.google.com/apikey
+2. [uv](https://docs.astral.sh/uv/)'yi kur, sonra proje klasöründe:
 
-A provider with no key is dropped from the candidate list before any request is
-made (there is no point collecting a 401), so starting with one key works fine —
-you just don't get failover until you add a second.
+   ```bash
+   uv sync
+   uv run ull-bot
+   ```
 
-## Running it
+   Tarayıcı kendiliğinden `http://127.0.0.1:8765` adresini açar.
 
-### The desktop app (phase 8)
+## Ayarlar
 
-```bash
-./scripts/ull-bot
-```
+Model adı arayüzden (Ayarlar → Model) değiştirilebilir. Geri kalanı ortam
+değişkenleriyle:
 
-This opens a native window (pywebview + the system's WebKitGTK — no browser
-chrome, no Electron) and **starts the two services itself**: the LiteLLM proxy
-on :4000 and the FastAPI app on :8080. Closing the window stops both.
+| Değişken | Varsayılan | Açıklama |
+| --- | --- | --- |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama adresi |
+| `ULL_DATA_DIR` | `./data` | Kişiliklerin ve ayarların tutulduğu klasör (`state.json`) |
+| `ULL_HOST` | `127.0.0.1` | Sunucunun dinlediği adres |
+| `ULL_PORT` | `8765` | Port |
+| `ULL_NO_BROWSER` | — | `1` ise tarayıcı otomatik açılmaz |
 
-`./scripts/install.sh` also drops a `.desktop` entry, so "ULL-Bot" shows up in
-your application menu. Like everything else that script does, it installs but
-does not start anything.
-
-If a service is already listening on its port — because you enabled the
-systemd units below — the supervisor **adopts** it: it won't start a second
-copy, and it won't stop it when the window closes. The two ways of running
-this don't fight each other.
-
-Services without a window (for debugging):
-
-```bash
-uv run python -m app.desktop.supervisor
-```
-
-Supervisor logs live in `~/.local/share/ai-orchestrator/logs/`.
-
-### Or start the two processes yourself
-
-**1. LiteLLM proxy** (no Docker required — runs directly via `uv`):
-
-```bash
-uv run litellm --config config/litellm.desktop.yaml --port 4000
-```
-
-Or with Docker, if you prefer:
-
-```bash
-docker compose up litellm
-```
-
-**2. Orchestrator (FastAPI):**
-
-```bash
-uv run uvicorn app.main:app --reload --port 8080
-```
-
-Open http://localhost:8080 and send a message. The chat runs over a WebSocket
-(`/ws/chat`) so the agent can ask for approval mid-task.
-
-## What the agent can do
-
-| Tool | What it does | Default risk |
-|---|---|---|
-| `read_file` | Read a text file, optional line range | safe |
-| `list_dir` | List a directory | safe |
-| `search_files` | Search file contents (ripgrep) | safe |
-| `run_shell` | Run a shell command | decided per command |
-| `remember` | Write a persistent note (`key`/`value`) that survives across sessions | safe |
-| `list_mail` | List cached mail, filtered by category / unread / text | safe |
-| `read_mail` | Read one message in full | safe (output is **untrusted**) |
-| `sync_mail` | Pull new mail from the IMAP server | safe |
-| `summarize_mail` | Summarize a message with a model; result is cached | safe |
-| `mark_mail` | Mark read/unread or flagged (written to IMAP too) | safe |
-| `categorize_mail` | Change a message's category (local label only) | safe |
-| `move_mail` | Move a message to another IMAP folder / trash | confirm |
-| `list_events` | List calendar events in a date range | safe |
-| `create_event` | Add an event (absolute `starts_at` required) | safe |
-| `update_event` | Change an existing event | safe |
-| `delete_event` | Delete an event (no undo) | confirm |
-| `mail_to_event` | Turn a meeting mail into a calendar event | safe |
-| `inspect_mail_meeting` | Preview what would be extracted — **saves nothing** | safe |
-| `web_search` | Search the web (Brave API if keyed, else DuckDuckGo) | safe (output is **untrusted**) |
-| `fetch_url` | Read a web page as text; SSRF-guarded | safe (output is **untrusted**) |
-
-Every call goes through the safety policy first, and every call is written to
-the audit log.
-
-The `safe` ratings on `remember`, `create_event` and friends follow one rule:
-writing a row to ULL-Bot's *own* SQLite database is not "the agent changing
-your system", so it isn't what `DRY_RUN` and the approval dialog exist to
-guard. The `confirm` ones are different — `move_mail` acts on a real IMAP
-server, and `delete_event` can't be undone (there's no trash yet).
-
-There's no separate "recall" tool for memory: every note gets embedded in the
-system prompt on every turn (see "Memory, history, and usage" below), so the
-model just sees it as ambient context.
-
-**Mail and web content are treated as hostile input.** Whoever wrote an email
-or a web page is not the user, so `read_mail`, `list_mail`, `web_search` and
-`fetch_url` output always comes back marked `untrusted` — the agent loop wraps it in `<tool_result untrusted="true">` and
-marks the session tainted, which tightens subsequent shell calls. The
-summarizer wraps the message the same way.
-
-**What the agent still can't do:** there's no `write_file`, `edit_file`, or
-`delete_file` tool. The only way it changes files today is `run_shell` (e.g.
-an approved `rm` or a redirect) — which means there's no trash/undo yet:
-an approved destructive shell command really executes. That's a known,
-explicitly-deferred gap, not an oversight — see DECISIONS.md.
-
-## Providers and quota
-
-`config/routing.yaml` holds the order providers are tried in *per task type*
-(see "Router" below); `config/litellm.<profile>.yaml` maps each abstract name
-to a real model. The orchestrator never names a provider SDK — it only knows
-`chat-groq`, `chat-openrouter`, `chat-gemini`, `chat-gemini-lite`, `chat-local`.
-
-| Provider label | Model | Free limits (2026-08-16) | Where the numbers come from |
-|---|---|---|---|
-| Groq | `llama-3.3-70b-versatile` | 30 req/min, 12K tok/min, 1000 req/day | published docs (local counting — see below) |
-| OpenRouter | `openai/gpt-oss-20b:free` | 20 req/min, 50 req/day (1000 if the account ever bought $10 of credit) | published docs + `GET /api/v1/key` probe |
-| Gemini | `gemini-3.5-flash` | 5 req/min, 20 req/day | per-account panel, local counter only |
-| Gemini (lite) | `gemini-3.5-flash-lite` | 15 req/min, 500 req/day | same panel — not a real second provider, see below |
-| Ollama (local) | `qwen2.5:3b-instruct` | no quota, VRAM-bound | runs on your GPU, no API key |
-
-`gemini_lite` isn't a real second provider — it's a bookkeeping label so the
-20-req/day `flash` and the 500-req/day `flash-lite` don't share one quota
-bucket. Both use the same `GEMINI_API_KEY`. See DECISIONS.md → "Gemini'nin iki
-modeli".
-
-Google no longer publishes free-tier numbers; they are per account and readable
-at https://aistudio.google.com/rate-limit. The values in `config/quotas.yaml`
-were read off that page rather than guessed (spec §12) — if you use a different
-account, replace them.
-
-## Router (task classification)
-
-Every message is classified by a rule-based `app/router/classifier.py` — no
-LLM call, so it costs nothing (see DECISIONS.md → "Sınıflandırıcı kural
-tabanlı, LLM değil"). Length and keywords decide the `task_type`
-(`trivial`, `tool_use`, `reasoning`, `long_context`, `code`, `vision`), and
-`config/routing.yaml` maps each one to its own provider chain — a greeting
-goes to a cheap/local model, a long document goes to the provider with the
-biggest context window, and so on. Quota/cooldown filtering still applies on
-top of whichever chain gets picked — classification narrows the candidate
-list, it never bypasses availability checks.
-
-Run `uv run python scripts/discover_models.py --openrouter` to see which
-OpenRouter models are currently free, if you want to add one to a chain.
-
-## Local model (Ollama)
-
-Optional, but `trivial` messages and the `tool_use` last resort use it before
-falling back to a cloud provider, so with it enabled some traffic keeps
-working offline. Arch:
-
-```bash
-sudo pacman -S ollama
-# GPU backend (pick one — Vulkan is much smaller and close to CUDA speed
-# for llama.cpp inference; the base ollama package is CPU-only):
-sudo pacman -S ollama-vulkan   # or: sudo pacman -S ollama-cuda (pulls the full CUDA toolkit)
-sudo systemctl enable --now ollama
-
-ollama pull qwen2.5:3b-instruct   # ~2 GB, what chat-local uses by default
-```
-
-`uv run python scripts/discover_models.py --local` reads your GPU's VRAM
-(`nvidia-smi`) and tells you which model sizes fit. `ENABLE_LOCAL=false` in
-`.env` turns it off entirely (e.g. to free VRAM for a game) without touching
-`routing.yaml` — the router just treats it as unavailable and moves to the
-next candidate, the same way it handles a 429. `OLLAMA_HOST` points at the
-Ollama server (`http://localhost:11434` by default; can point at a LAN
-machine, though that's wired for phase 6's laptop profile, not used yet).
-
-**How a provider is picked.** For each candidate in the chain: no API key →
-skipped; manually disabled → skipped; in cooldown after a 429 → skipped;
-remaining quota below `RESERVE_RATIO` of the limit → skipped. The first survivor
-wins. If nobody survives, `fallback_behaviour` in `routing.yaml` decides —
-`force_first` tries the head of the chain anyway, `error` shows an error.
-
-**On a 429.** The provider gets a cooldown (from `Retry-After`, or
-`default_cooldown_seconds`), is excluded for the rest of this turn, and the
-turn continues on the next provider — up to `MAX_PROVIDER_ATTEMPTS`. The switch
-is not silent: the chat shows which provider it moved to, why the previous one
-was dropped, and which candidates were rejected on the way.
-
-**Counting.** Every call writes a row to `usage_events` (provider, model,
-tokens, latency, status), including the failed ones — a 429 consumed a request
-even though it produced no answer. Token counts come from
-`stream_options.include_usage`, so streaming doesn't blind the counter. Live
-probe data, when it is fresher than 15 minutes, overrides the local count; the
-quota panel labels each window `canlı` or `tahmini` so you can tell which you
-are looking at.
-
-In practice only OpenRouter reports `canlı` today: LiteLLM does not forward
-Groq's `x-ratelimit-*` headers to the client (tested on 1.97.0), so Groq is
-counted locally too. That only loses visibility into usage of the same key by
-*other* apps — hitting the real limit still produces a 429 and a cooldown.
-
-**The panel.** The `kota` button in the header opens it: per provider, a bar per
-window, the reset time, and a disable/enable button. `canlı sorgula` forces a
-probe. `GET /api/quota?probe=true` returns the same data as JSON.
-
-## Safety model
-
-This is the part that matters — the agent has shell access on your real Arch
-install. Three levels (spec §6.3):
-
-- **safe** — runs without asking. Read-only commands from an allowlist
-  (`ls`, `cat`, `grep`, `find`, `git status`, …) whose path arguments stay
-  inside the workspace.
-- **confirm** — you get an inline dialog with the exact command, the affected
-  paths and the reason; nothing runs until you approve. This is the default for
-  anything not on the read-only allowlist.
-- **blocked** — never runs, no dialog, the model just gets an error.
-
-Blocked includes: `sudo`/`su`/`doas`, package managers (`pacman`, `yay`, …),
-`systemctl`, disk tools (`mkfs*`, `fdisk`, `dd`, …), `rm -rf` outside `$HOME`,
-`chmod`/`chown` on system paths, `curl … | bash`, and anything that can't be
-analysed statically (`$(...)`, backticks, subshells, unbalanced quotes).
-
-Obfuscation is handled by tokenizing the command the way a shell would, so
-`"su""do"` and `s\udo` are recognised as `sudo`. Non-ASCII command names
-(homoglyphs like `ѕudo`) are refused.
-
-**Paths.** `config/workspace.yaml` lists `allowed_paths` / `denied_paths` /
-`denied_globs`. Every path is fully resolved (symlinks included) before being
-checked, so `../../../etc/passwd` and a symlink pointing out of the workspace
-are both caught. Secrets (`.env`, `*.pem`, `id_rsa*`, `~/.ssh`, browser
-profiles) are denied even inside the workspace.
-
-**Dry-run.** `DRY_RUN=true` (the default) means commands that could write are
-reported instead of executed; read-only commands still run normally. Turn it
-off in `.env` once you trust the setup.
-
-**Audit log.** Every tool call, approval and refusal is appended to
-`~/.local/share/ai-orchestrator/audit.log` (JSON Lines, mode 0600). That
-directory is on the deny list, so the agent cannot read or edit its own trail.
-
-**Prompt injection.** Tool output reaches the model wrapped in
-`<tool_result untrusted="true">`, and the system prompt says instructions found
-in tool output are never obeyed. After untrusted content enters the context,
-shell calls are escalated to `confirm` even when they look harmless.
-
-### Known gaps (see DECISIONS.md for the reasoning)
-
-- **No trash/undo yet.** With dry-run off, an `rm` you approve really deletes.
-  The automatic backup-before-delete from spec §6.3 lands with the write tools
-  (`write_file`, `edit_file`, `delete_file`), which are not in phase 2.
-- **`run_shell` is disabled on Windows.** The command policy is POSIX-only; a
-  half-written PowerShell policy would be more dangerous than none. File tools
-  work everywhere.
-- **The agent runs as you**, not as a separate `aiagent` user. That's a
-  deployment concern, planned with the systemd units in phase 7.
-
-## Profiles (desktop / laptop)
-
-`PROFILE` in `.env` picks which block of `config/routing.yaml` is used and,
-separately, which LiteLLM config file you point the proxy at:
-
-```bash
-PROFILE=laptop uv run uvicorn app.main:app --port 8080
-uv run litellm --config config/litellm.laptop.yaml --port 4000
-```
-
-Both need to agree — `PROFILE` doesn't pick the LiteLLM file for you, so
-`config/litellm.laptop.yaml` has to be passed explicitly to the `--config`
-flag. The two `litellm.*.yaml` files declare the same models (a test checks
-this doesn't drift); the difference is entirely in `routing.yaml`, where the
-`laptop` block never lists `ollama` as a candidate. That's static, not a
-runtime check — `ENABLE_LOCAL=true` on a laptop still won't offer it, because
-the chain it would need to appear in doesn't include it at all.
-
-The LAN option from spec §5.1 (a laptop using the desktop's Ollama over the
-network instead of running its own) is wired but **off**, and untested beyond
-"the code path exists": `OLLAMA_HOST` can point at any address, but the
-desktop's own Ollama only listens on `127.0.0.1` by default (checked with
-`ss -ltnp`), so it isn't reachable from the LAN yet. Turning that on means
-overriding `OLLAMA_HOST=0.0.0.0:11434` for the desktop's `ollama.service`
-(`systemctl edit ollama`) — a real exposure decision, so it wasn't done
-automatically. If you want it, do that, then add
-`{provider: ollama, model: chat-local}` to `routing.yaml`'s `laptop.trivial` /
-`laptop.tool_use` blocks and point the laptop's `.env` `OLLAMA_HOST` at the
-desktop's LAN IP.
-
-## Configuration
-
-Everything lives in `.env` (see `.env.example`).
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `WORKSPACE_ROOT` | `~/Projects` | Agent's working directory; always allowed |
-| `DRY_RUN` | `true` | Report writes instead of doing them |
-| `MAX_AGENT_STEPS` | `15` | Tool-loop step limit before asking to continue |
-| `APPROVAL_TIMEOUT_SECONDS` | `300` | Unanswered approval counts as **denied** |
-| `TOOL_OUTPUT_LIMIT` | `4000` | Tool output is truncated in the middle past this |
-| `SHELL_TIMEOUT_SECONDS` | `30` | Per-command timeout |
-| `RESERVE_RATIO` | `0.1` | Reserve share of a quota; below it a provider is dropped before a 429 |
-| `MAX_PROVIDER_ATTEMPTS` | `3` | How many providers one turn may try after 429s |
-| `OLLAMA_HOST` | `http://localhost:11434` | Where the local model server is |
-| `ENABLE_LOCAL` | `true` | Master switch for the local model — `false` removes it from every chain |
-| `PROFILE` | `desktop` | Which block of `routing.yaml` to use — see "Profiles" above |
-
-The quota numbers themselves are not env vars — they live in
-`config/quotas.yaml` with a source link and a date next to each block, because
-they change on the provider's schedule, not yours.
-
-## Tests
+## Geliştirme
 
 ```bash
 uv run pytest
 ```
 
-Covers the safety policy (every blocked pattern, obfuscation, path traversal,
-symlink escape), the tools, the agent loop (step limit, output truncation,
-approval flow), prompt injection — including a test where the model
-deliberately obeys an injected `rm -rf ~` and the policy stops it — the
-phase 3 additions (window maths for all three reset styles, header parsing,
-cooldowns, and provider selection including the 429-mid-turn switch), the
-phase 4 classifier and its wiring into the agent loop, the phase 5 local
-model gate (`ENABLE_LOCAL`, no quota ceiling, laptop profile never offers it),
-phase 6's config consistency checks (the two `litellm.*.yaml` files declare
-the same models; every `routing.yaml` entry actually resolves to one of them;
-`laptop` never references `ollama`, even statically in the YAML), and phase
-7's memory store + `remember` tool + its injection into the system prompt,
-plus the new REST endpoints (`tests/test_api.py`, using FastAPI's
-`TestClient` — no server process needed). None of these hit the real Ollama
-server or providers — `FakeLLM` stands in, so `uv run pytest` needs no
-network access and no GPU.
-
-## Why Docker isn't required
-
-This project targets Linux first but is planned to be ported to Windows
-later. To keep the dev loop from depending on Docker Desktop, the LiteLLM
-proxy also runs as a plain Python package. See DECISIONS.md →
-"Cross-platform portability" for details.
-
-## Database
-
-SQLite is written to a platform-appropriate data directory by default
-(`~/.local/share/ai-orchestrator/orchestrator.db` on Linux,
-`%LOCALAPPDATA%\ai-orchestrator\orchestrator.db` on Windows). Override with
-`DB_PATH` in `.env` if you want a different location.
-
-## Memory, history, and usage (phase 7)
-
-These are backend-only — data and REST endpoints, no UI (see "What's not
-built yet" below).
-
-**Persistent memory.** The `remember` tool writes to `memory_notes`
-(key/value, upsert on repeat keys). Every note gets rendered into the system
-prompt on every turn under a "Remembered notes" section — there's no separate
-recall step. `GET /api/memory` lists them, `DELETE /api/memory/{key}` removes
-one (there's no `forget` tool; deleting a note is a management action, not
-something the model decides to do on its own).
-
-**Session history.** Every message was already being written to SQLite since
-phase 1 — phase 7 just exposes it: `GET /api/sessions` lists sessions
-(newest first, title derived from the first user message if none was set),
-`GET /api/sessions/{id}/messages` returns the full record for one session
-(tool messages included, unlike what gets replayed to the model).
-
-**Search.** `GET /api/search?q=...` does a plain SQL `LIKE` over message
-content across all sessions. Not full-text search (no FTS5 virtual table) —
-for a single person's chat history that's more machinery than the problem
-needs; see DECISIONS.md if that stops being true.
-
-**Usage graph.** `GET /api/usage/graph?days=14` aggregates `usage_events` by
-day and provider (requests, tokens, rate-limited count, error count). Same
-table `/api/quota` already reads from — this just groups it differently. No
-chart is rendered anywhere; it's a data endpoint for a UI to build on.
-
-## Deployment (systemd --user)
-
-`systemd/*.service` + `ull-bot.target` run the two long-lived processes
-(LiteLLM proxy, FastAPI app) as your own user — no separate system account,
-no sudo. `scripts/install.sh` does `uv sync`, creates `.env` if missing, and
-installs the units into `~/.config/systemd/user/` with the placeholder repo
-path filled in; it does **not** enable or start anything, and does not touch
-`.env` if one already exists — you run:
-
-```bash
-./scripts/install.sh
-systemctl --user enable --now ull-bot.target   # only when you're ready
 ```
-
-`journalctl --user -u ull-bot-api -u ull-bot-litellm -f` for logs. Ollama
-itself stays a separate system service (`sudo systemctl enable --now ollama`,
-set up in phase 5) — it's not part of this target, since it isn't specific to
-ULL-Bot and other things on the machine might use it.
-
-## Mail and calendar (phase 8)
-
-**Mail is IMAP**, authenticated with an app password. Google OAuth was built
-and then removed: Gmail's IMAP only accepts the restricted
-`https://mail.google.com/` scope, and Google revokes authorizations for
-unverified apps every 7 days — a mail client that breaks weekly is worse than
-no OAuth at all. See DECISIONS.md for the full reasoning.
-
-Add an account under Settings → Mail. Type your address and the dialog works
-out the server, then — for Gmail and Google Workspace addresses — shows a
-link that opens Google's app-password page **with that account preselected**.
-Paste the 16-character password back in; spaces are stripped, so you can
-paste it exactly as Google displays it.
-
-Three traps the dialog closes, because all three were hit in practice:
-
-- **Username must be the full email**, not your display name. Gmail rejects
-  anything else, so the field is locked to the address (and moved behind
-  "Gelişmiş" — you rarely need it).
-- **Workspace addresses use `imap.gmail.com`**, not `imap.yourcompany.com`.
-  One click fixes it.
-- **App passwords need 2-Step Verification on.** If Google says the setting
-  is unavailable, that's why — or, on a Workspace account, your admin has
-  disabled app passwords and IMAP entirely. The dialog links to both.
-
-Mail is rendered as real HTML in a sandboxed iframe with scripting disabled
-and the markup stripped of `<script>`, `<iframe>`, `<form>` and event
-handlers. **Remote images are blocked by default** — in marketing mail they
-are usually tracking pixels that tell the sender when you opened it. One
-click loads them for that message.
-
-Incoming mail is sorted by a rule-based classifier into `toplantı`, `iş`,
-`fatura`, `bülten`, `bildirim`, `kişisel`, `diğer`, `spam`. Rules are free and
-most mail is decided outright by headers (a `text/calendar` part means a
-meeting invite; `List-Unsubscribe` means a newsletter). A model is only asked
-about the ones the rules couldn't decide, and only when you press the button.
-
-**Spam is exiled, not filtered.** It never appears in "Tümü", "Okunmamış" or
-search — only under its own category, at the bottom of the sidebar. The
-server's own verdict wins over ours: anything from the IMAP Junk folder or
-carrying an `X-Spam-Flag` header is spam regardless of what our rules think.
-
-**The calendar is this app's own** — it does not sync to Google or to a phone.
-Import/export is ICS. A meeting mail becomes an event either exactly (when the
-mail carries an ICS invite) or by extracting a date from the text (Turkish and
-English), in which case you get a confidence score and a chance to correct it
-before saving. Recurring series (RRULE) are not supported: only the first
-occurrence is added, and you're told it was a series.
-
-**Reminders go to your OS notifier**, not to a window we draw — `dunstify` if
-present, otherwise `notify-send`. Whichever daemon you run (dunst, mako, GNOME,
-KDE) handles the styling, position and timeout.
-
-## What's not built yet
-
-See NEXT_PHASE.md for the reasoning behind each:
-
-- **Trash / undo / `write_file` / `edit_file` / `delete_file`.** Still only
-  `run_shell` can change files, and an approved destructive command really
-  runs. Not assigned to any numbered phase in the spec — flagged, not solved.
-- **Phone notifications.** Reminders are desktop-only; pushing them to a
-  phone was explicitly deferred.
-- **Sending or replying to mail.** Read, mark and move only.
-- **A separate system user for the agent.** It runs as you.
-- **The LAN Ollama option** for the laptop profile (spec §5.1) — wired but
-  untested beyond a single machine; see the "Profiles" section above.
-
-## Roadmap
-
-- [x] Phase 1 — skeleton + single provider
-- [x] Phase 2 — tools + safety
-- [x] Phase 3 — multi-provider + quota tracking
-- [x] Phase 4 — router (task classification: trivial / reasoning / code / …)
-- [x] Phase 5 — local model
-- [x] Phase 6 — profiles (desktop/laptop)
-- [x] Phase 7 — polish (memory, history, search, usage graph, systemd,
-      install script — all backend; UI intentionally not built here)
-- [x] Phase 8 — desktop app (services start/stop with the window), IMAP mail
-      with rule-based sorting and on-demand summaries, the app's own calendar
-      with meeting extraction from mail, and desktop reminders
+app/main.py    FastAPI sunucusu: arayüzü sunar, sohbeti Ollama'ya aktarır
+app/store.py   kişilik + ayar deposu (JSON)
+web/           arayüz (index.html, style.css, app.js, rain.js)
+tests/         API testleri (Ollama taklit edilir)
+```
