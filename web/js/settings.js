@@ -32,14 +32,14 @@ function panel(title, desc, right) {
   return p;
 }
 
-function row(label, desc, controls) {
+export function row(label, desc, controls) {
   const r = el("div", "set-row");
   r.innerHTML = `<div><div class="lbl">${esc(label)}</div>${desc ? `<div class="desc">${desc}</div>` : ""}</div><div class="ctl"></div>`;
   $(".ctl", r).append(...[].concat(controls));
   return r;
 }
 
-function switchCtl(value, onChange) {
+export function switchCtl(value, onChange) {
   const b = el("button", "switch");
   b.type = "button";
   b.setAttribute("role", "switch");
@@ -52,7 +52,7 @@ function switchCtl(value, onChange) {
   return b;
 }
 
-function rangeCtl(value, { min, max, step, fmt }, onChange) {
+export function rangeCtl(value, { min, max, step, fmt }, onChange) {
   const input = el("input");
   Object.assign(input, { type: "range", min, max, step, value });
   const val = el("span", "val", esc(fmt(value)));
@@ -64,7 +64,7 @@ function rangeCtl(value, { min, max, step, fmt }, onChange) {
   return [input, val];
 }
 
-function segCtl(value, options, onChange) {
+export function segCtl(value, options, onChange) {
   const seg = el("div", "seg");
   options.forEach(([v, label]) => {
     const b = el("button", "", esc(label));
@@ -79,7 +79,7 @@ function segCtl(value, options, onChange) {
   return seg;
 }
 
-function button(label, cls, onClick) {
+export function button(label, cls, onClick) {
   const b = el("button", `btn ${cls || ""}`, esc(label));
   b.type = "button";
   b.addEventListener("click", onClick);
@@ -391,8 +391,11 @@ function renderModelSearch() {
   };
   const showPicked = () => {
     const name = nameIn.value.trim();
-    prog.dataset.pull = name;
     const m = scanData?.models.find((x) => x.name === name || `${x.name}:latest` === name);
+    // İlerleme tek yerde: model katalogdaysa kartın içinde, değilse kutunun altında.
+    // (İkisi birden aynı indirmeyi gösteriyordu.)
+    prog.dataset.pull = m ? "" : name;
+    if (m) prog.hidden = true;
     picked.innerHTML = "";
     if (m) {
       const list = el("div", "model-list");

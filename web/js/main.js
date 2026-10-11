@@ -15,6 +15,7 @@ import { refreshModels } from "./models.js";
 import { leaveProject, showProject } from "./project.js";
 import { leaveSettings, showSettings } from "./settings.js";
 import { focusSearch } from "./sidebar.js";
+import { leaveTrain, showTrain } from "./train.js";
 import { S, chatById, emit, on, projectById } from "./store.js";
 import { $, $$, el, esc } from "./util.js";
 
@@ -27,6 +28,7 @@ function parse(hash) {
   if (parts[0] === "new" && parts[1]) return { view: "chat", chatId: null, projectId: parts[1] };
   if (parts[0] === "p" && parts[1]) return { view: "project", projectId: parts[1] };
   if (parts[0] === "settings") return { view: "settings", page: parts[1] || "appearance" };
+  if (parts[0] === "train") return { view: "train" };
   return { view: "chat", chatId: null, projectId: null };
 }
 
@@ -39,6 +41,7 @@ function navigate() {
   route = parse(location.hash);
   if (prev.view === "settings" && route.view !== "settings") leaveSettings();
   if (prev.view === "project" && route.view !== "project") leaveProject();
+  if (prev.view === "train" && route.view !== "train") leaveTrain();
   showView(route.view);
 
   if (route.view === "chat") {
@@ -48,6 +51,8 @@ function navigate() {
     showProject(route.projectId);
   } else if (route.view === "settings") {
     showSettings(route.page);
+  } else if (route.view === "train") {
+    showTrain();
   }
   app.classList.remove("side-open");
   renderCrumb();
@@ -64,6 +69,10 @@ function renderCrumb() {
 
   if (route.view === "settings") {
     add(el("span", "cur", "AYARLAR"));
+    return;
+  }
+  if (route.view === "train") {
+    add(el("span", "cur", "◈ İNCE AYAR"));
     return;
   }
   if (route.view === "project") {

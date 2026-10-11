@@ -18,3 +18,8 @@ Thumbs.db
 
 # kullanıcı verisi (kişilikler, ayarlar)
 data/
+
+# ince ayar: eğitim ortamı ve kullanıcının veri setleri (örnek hariç)
+.train-venv/
+datasets/*
+!datasets/ornek-ullbot.json

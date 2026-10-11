@@ -27,7 +27,8 @@ export function debounce(fn, ms) {
 export function fmtBytes(n) {
   if (!n) return "—";
   const gb = n / 1024 ** 3;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return n >= 1024 ** 2 ? `${Math.round(n / 1024 ** 2)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
 export function hexToRgba(hex, a) {

@@ -156,6 +156,7 @@ on("projects", render);
 on("route", (r) => {
   route = r;
   $("#act-settings").classList.toggle("is-active", r.view === "settings");
+  $("#act-train").classList.toggle("is-active", r.view === "train");
   render();
 });
 

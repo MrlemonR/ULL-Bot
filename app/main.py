@@ -29,7 +29,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import __version__, catalog, hardware
+from app import __version__, catalog, finetune, hardware
 from app.db import DB
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -174,6 +174,22 @@ class PrefabSaveIn(BaseModel):
 
 class PrefabFileIn(BaseModel):
     file: str = Field(min_length=1, max_length=200)
+
+
+class TrainStartIn(BaseModel):
+    base: str = Field(min_length=1, max_length=100)
+    dataset: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=80)
+    system: str = Field(default="", max_length=20000)
+    epochs: int = Field(3, ge=1, le=20)
+    lr: float = Field(2e-4, ge=1e-6, le=1e-2)
+    rank: Literal[4, 8, 16, 32, 64] = 16
+    max_len: int = Field(1024, ge=128, le=8192)
+
+
+class DatasetUploadIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=50_000_000)
 
 
 class PullIn(BaseModel):
@@ -325,6 +341,9 @@ def create_app(
     ollama_url: str | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     prefab_dir: str | Path | None = None,
+    train_python: str | Path | None = None,
+    ollama_cmd: list[str] | None = None,
+    dataset_dir: str | Path | None = None,
 ) -> FastAPI:
     data_dir = Path(data_dir or os.environ.get("ULL_DATA_DIR", "data"))
     # Ayar dosyaları uygulamanın klasöründe: <proje>/prefab
@@ -366,6 +385,15 @@ def create_app(
 
     app = FastAPI(title="ULL-Bot", version=__version__, lifespan=lifespan)
     app.state.effective_ollama_url = effective_url
+    trainer = finetune.Trainer(
+        ROOT_DIR, data_dir,
+        ollama_url=lambda: app.state.ollama_url,
+        # Eğitim bitince ULL-Bot yeni modele geçer.
+        on_model_ready=lambda name: db.update_settings({"model": name}),
+        ollama_cmd=ollama_cmd,
+        train_python=Path(train_python) if train_python else None,
+        dataset_dir=Path(dataset_dir) if dataset_dir else None,
+    )
 
     def settings() -> dict:
         s = db.get_settings()
@@ -821,6 +849,93 @@ def create_app(
             raise HTTPException(502, describe_ollama_error(e, app.state.ollama_url))
         if r.status_code != 200:
             raise HTTPException(r.status_code, _ollama_error(r.status_code, r.text, name))
+        return {"ok": True}
+
+    # --- ince ayar (fine-tune) -------------------------------------------------------------
+
+    @app.get("/api/train/env")
+    async def train_env(refresh: bool = False):
+        env = await run_in_threadpool(trainer.env, refresh)
+        models, _ = await installed_models()
+        names = {m["name"] for m in models or []}
+        bases = []
+        for key, info in finetune.BASES.items():
+            bases.append({
+                "name": key, "label": info["label"], "params_b": info["params_b"],
+                "installed": bool({key, f"{key}:latest"} & names),
+                "vram_4bit": finetune.vram_need(info["params_b"], True),
+                "vram_full": finetune.vram_need(info["params_b"], False),
+            })
+        return {"env": env, "bases": bases, "busy": trainer.busy()}
+
+    @app.post("/api/train/env/install")
+    def train_install():
+        try:
+            return trainer.start_install().snapshot()
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+
+    @app.get("/api/train/status")
+    def train_status():
+        return {"job": trainer.status(), "history": trainer.history()}
+
+    @app.post("/api/train/cancel")
+    def train_cancel():
+        return {"ok": trainer.cancel()}
+
+    @app.post("/api/train/start")
+    async def train_start(body: TrainStartIn):
+        models, _ = await installed_models()
+        try:
+            job = trainer.start_training(
+                base=body.base, dataset=body.dataset, name=body.name, system=body.system, epochs=body.epochs,
+                lr=body.lr, rank=body.rank, max_len=body.max_len, installed={m["name"] for m in models or []},
+            )
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        except FileNotFoundError:
+            raise HTTPException(404, "Veri seti bulunamadı")
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return job.snapshot()
+
+    @app.get("/api/train/datasets")
+    def train_datasets():
+        return {"dir": str(trainer.datasets), "items": trainer.list_datasets()}
+
+    @app.get("/api/train/datasets/{file}")
+    def train_dataset(file: str):
+        try:
+            return finetune.dataset_summary(trainer.dataset_path(file))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except FileNotFoundError:
+            raise HTTPException(404, "Veri seti bulunamadı")
+
+    @app.post("/api/train/datasets", status_code=201)
+    def train_dataset_upload(body: DatasetUploadIn):
+        try:
+            return {"file": trainer.save_dataset(body.name, body.content)}
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+
+    @app.delete("/api/train/datasets/{file}")
+    def train_dataset_delete(file: str):
+        try:
+            trainer.dataset_path(file).unlink()
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except FileNotFoundError:
+            raise HTTPException(404, "Veri seti bulunamadı")
+        return {"ok": True}
+
+    @app.post("/api/train/datasets/open-folder")
+    def train_dataset_folder():
+        trainer.datasets.mkdir(parents=True, exist_ok=True)
+        try:
+            open_folder(trainer.datasets)
+        except OSError as e:
+            raise HTTPException(500, f"Klasör açılamadı: {e}")
         return {"ok": True}
 
     # Arayüz en sonda: "/" altındaki her şeyi yakalar, API rotaları önce eşleşir.

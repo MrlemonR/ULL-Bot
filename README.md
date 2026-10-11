@@ -24,6 +24,10 @@ karakterlerle Matrix yağmuru akar.
 - **Model ara & indir** — model adını yazmaya başla (`llam`, `qwen`, `kod`…):
   eşleşen modeller bu bilgisayarda nasıl çalışacakları ve ne işe yaradıklarıyla
   listelenir.
+- **İnce ayar (fine-tune)** — kenar çubuğunda *◈ İnce ayar*: bir model seç
+  (Llama 3.1 8B, Llama 3.2 1B/3B, Mistral 7B), soru-cevap JSON dosyasını ver,
+  eğitimi başlat. Bitince Ollama'ya yeni bir model olarak eklenir ve seçilir.
+  Ayrıntılar aşağıda.
 - Model düşünürken üç nokta yerine `■ Cooking… ░▒▓█▓▒░░ 3s`.
 
 ## Kurulum
@@ -44,12 +48,47 @@ karakterlerle Matrix yağmuru akar.
 
    Tarayıcı kendiliğinden `http://127.0.0.1:8765` adresini açar.
 
+## İnce ayar (fine-tune)
+
+Ollama'nın model dosyaları (GGUF) doğrudan eğitilemiyor. ULL-Bot bu yüzden
+modelin orijinal ağırlıklarını Hugging Face'ten indirir, üstüne bir **LoRA
+adaptörü** eğitir ve adaptörü Ollama'daki aynı modelin üstüne takar:
+
+```
+FROM llama3.1:8b
+ADAPTER ./adapter
+```
+
+1. **Eğitim ortamı** — *İnce ayar → ORTAMI KUR*. Ayrı bir Python ortamı
+   (`.train-venv`) kurulur: PyTorch (CUDA sürümü sürücüne göre seçilir),
+   Unsloth ve PEFT. Birkaç GB indirir; bir kez yapılır.
+2. **Veri seti** — `datasets/` klasörüne at ya da *DOSYA YÜKLE*. Biçim:
+
+   ```json
+   [
+     {"soru": "Adın ne?", "cevap": "Ben ULL-Bot."},
+     {"soru": "...", "cevap": "..."}
+   ]
+   ```
+
+   `question/answer`, `instruction/input/output`, `prompt/completion`,
+   `messages` (sohbet) ve JSONL de olur. Örnek: `datasets/ornek-ullbot.json`.
+3. **Model ve ayarlar** — temel model, yeni modelin adı, isteğe bağlı sistem
+   mesajı, tur sayısı, öğrenme hızı, LoRA rank, en fazla uzunluk.
+4. **Eğitimi başlat** — ilerleme, loss, kalan süre ve günlük canlı görünür.
+   Bitince `ollama create` ile yeni model oluşturulur ve ULL-Bot ona geçer.
+
+Gereksinimler: **NVIDIA ekran kartı** (8B için ~8 GB VRAM, 4-bit QLoRA),
+birkaç GB boş disk, `ollama` komutu PATH'te. GPU yoksa yalnızca 1B model CPU'da
+(çok yavaş) denenebilir. Ollama adaptörleri Llama ve Mistral için destekliyor;
+Qwen/Gemma şimdilik listede yok.
+
 ## Sorun giderme
 
 - **Güncelledim ama eski hali açılıyor** — eski ULL-Bot penceresi hâlâ açık
   olabilir: kapat (Ctrl+C) ve `uv run ull-bot` ile yeniden başlat. Port
   doluysa ULL-Bot bunu söyleyip çıkar. Tarayıcıda bir kez Ctrl+F5 yap.
-  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.4.0`).
+  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.5.0`).
 - **Ollama'ya bağlanamıyor** — başlarken terminalde `Ollama (...): ...`
   satırı sebebi yazar. Ollama açık olmalı (Windows'ta Ollama uygulaması ya da
   `ollama serve`). Farklı adres/port için: *Ayarlar → Modeller → Ollama
@@ -62,6 +101,8 @@ karakterlerle Matrix yağmuru akar.
 | `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama adresi (ayarlardan da değiştirilebilir; yoksa `OLLAMA_HOST` okunur) |
 | `ULL_DATA_DIR` | `./data` | Sohbetler, projeler, kişilikler ve ayarlar (`ull.db`) |
 | `ULL_PREFAB_DIR` | `<proje>/prefab` | Ayar dosyalarının klasörü |
+| `ULL_DATASET_DIR` | `<proje>/datasets` | İnce ayar veri setleri |
+| `ULL_TRAIN_VENV` | `<proje>/.train-venv` | Eğitim için ayrı Python ortamı |
 | `ULL_HOST` | `127.0.0.1` | Sunucunun dinlediği adres |
 | `ULL_PORT` | `8765` | Port |
 | `ULL_NO_BROWSER` | — | `1` ise tarayıcı otomatik açılmaz |
@@ -80,6 +121,8 @@ app/main.py      FastAPI sunucusu: API, sohbet akışı, prompt kurulumu
 app/db.py        SQLite deposu (ayarlar, kişilikler, projeler, sohbetler)
 app/hardware.py  donanım taraması (CPU, RAM, GPU/VRAM — Windows/Linux/macOS)
 app/catalog.py   önerilen modeller ve donanıma göre uygunluk
+app/finetune.py  ince ayar: veri seti, eğitim ortamı, iş yönetimi, Ollama'ya ekleme
+app/train_worker.py  eğitim betiği (.train-venv'de çalışır: Unsloth / PEFT LoRA)
 web/             arayüz (index.html, style.css, js/*.js modülleri)
 tests/           API testleri (Ollama taklit edilir)
 ```
