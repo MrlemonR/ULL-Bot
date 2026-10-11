@@ -1,4 +1,4 @@
-/* ULL-Bot — terminal / matrix arayüzü
+/* ULL-Bot — terminal / matrix arayüzü (siyah-beyaz + biraz kırmızı)
  *
  * Köşeler KARE (kullanıcı isteği). Değişkenler duruyor ki biri tek satırla
  * yuvarlatabilsin. Paneller yarı saydam: arkadaki yağmur hafifçe görünüyor
@@ -8,27 +8,33 @@
 :root {
   color-scheme: dark;
 
-  --bg-0: #030605;
-  --panel: rgba(6, 12, 9, 0.88);
-  --panel-2: rgba(10, 20, 15, 0.92);
-  --panel-solid: #08110d;
-  --hover: rgba(61, 255, 138, 0.07);
+  --bg-0: #050505;
+  --panel: rgba(10, 10, 10, 0.88);
+  --panel-2: rgba(17, 17, 17, 0.92);
+  --panel-solid: #0b0b0b;
+  --hover: rgba(255, 255, 255, 0.06);
 
-  --line: #173324;
-  --line-strong: #24533a;
+  --line: #262626;
+  --line-strong: #3b3b3b;
 
-  --text: #d9f7e5;
-  --text-2: #9fc9b0;
-  --text-3: #719c84;
+  --text: #f0f0f0;
+  --text-2: #b8b8b8;
+  --text-3: #8c8c8c;
 
-  --accent: #3dff8a;
-  --accent-dim: #1fae5a;
-  --accent-soft: rgba(61, 255, 138, 0.1);
-  --accent-line: rgba(61, 255, 138, 0.35);
+  /* Siyah-beyaz tema: vurgu rengi beyaz, kırmızı yalnızca küçük dokunuşlarda
+   * (marka, bot çizgisi, düşünme göstergesi, imleç, aktif rozet). */
+  --accent: #ffffff;
+  --accent-dim: #8f8f8f;
+  --accent-soft: rgba(255, 255, 255, 0.08);
+  --accent-line: rgba(255, 255, 255, 0.32);
 
-  --danger: #ff5c6c;
-  --danger-soft: rgba(255, 92, 108, 0.12);
-  --warn: #ffc857;
+  --red: #ff2a3d;
+  --red-soft: rgba(255, 42, 61, 0.12);
+  --red-line: rgba(255, 42, 61, 0.45);
+
+  --danger: var(--red);
+  --danger-soft: var(--red-soft);
+  --warn: #d6d6d6;
 
   --r: 0;
 
@@ -55,7 +61,7 @@ button { cursor: pointer; border: none; background: none; padding: 0; }
 h1, h2, h3 { margin: 0; font-weight: 600; }
 code { font-family: var(--mono); font-size: 0.92em; }
 
-::selection { background: var(--accent); color: #021; }
+::selection { background: var(--red); color: #fff; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -101,7 +107,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   letter-spacing: 0.12em;
   color: var(--text);
 }
-.brand b { color: var(--accent); font-weight: 700; }
+.brand b { color: var(--red); font-weight: 700; }
 
 .tabs { display: flex; gap: 4px; }
 .tab {
@@ -134,10 +140,10 @@ code { font-family: var(--mono); font-size: 0.92em; }
   border-radius: var(--r);
   white-space: nowrap;
 }
-.chip.is-warn { color: var(--warn); border-color: rgba(255, 200, 87, 0.4); }
+.chip.is-warn { color: var(--red); border-color: var(--red-line); }
 .chip-dot i { width: 7px; height: 7px; background: var(--text-3); }
-.chip-dot.is-ok i { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-.chip-dot.is-bad { color: var(--danger); border-color: rgba(255, 92, 108, 0.4); }
+.chip-dot.is-ok i { background: var(--accent); box-shadow: 0 0 8px rgba(255, 255, 255, 0.7); }
+.chip-dot.is-bad { color: var(--danger); border-color: var(--red-line); }
 .chip-dot.is-bad i { background: var(--danger); }
 .chip-btn:hover { color: var(--accent); border-color: var(--accent-line); }
 
@@ -170,7 +176,8 @@ code { font-family: var(--mono); font-size: 0.92em; }
   margin: 0 0 16px;
   font: 14px/1.05 var(--mono);
   color: var(--accent);
-  text-shadow: 0 0 12px rgba(61, 255, 138, 0.45);
+  /* hafif kırmızı kayma: bozuk ekran / glitch havası */
+  text-shadow: 2px 0 0 rgba(255, 42, 61, 0.55), 0 0 14px rgba(255, 255, 255, 0.25);
 }
 .muted { color: var(--text-3); }
 
@@ -213,14 +220,14 @@ code { font-family: var(--mono); font-size: 0.92em; }
 }
 .msg-user .msg-head .who { color: var(--text); }
 
-.msg-bot { border-left: 2px solid var(--accent); }
+.msg-bot { border-left: 2px solid var(--red); }
 .msg-bot .msg-head .who { color: var(--accent); }
 .msg-bot.is-error { border-left-color: var(--danger); }
 .msg-bot.is-error .msg-head .who { color: var(--danger); }
 .err {
   color: var(--danger);
   background: var(--danger-soft);
-  border: 1px solid rgba(255, 92, 108, 0.35);
+  border: 1px solid var(--red-line);
   padding: 8px 10px;
   font-family: var(--mono);
   font-size: 12.5px;
@@ -230,7 +237,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 
 .code {
   margin: 0;
-  background: #020403;
+  background: #000;
   border: 1px solid var(--line);
   overflow-x: auto;
 }
@@ -253,7 +260,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 /* Akış sırasında metnin sonundaki blok imleç */
 .cursor {
   display: inline-block;
-  color: var(--accent);
+  color: var(--red);
   animation: blink 1s steps(1) infinite;
 }
 @keyframes blink { 50% { opacity: 0; } }
@@ -279,10 +286,11 @@ code { font-family: var(--mono); font-size: 0.92em; }
   font: 12.5px/1.3 var(--mono);
   color: var(--accent);
 }
-.spinner .bar { letter-spacing: 0; text-shadow: 0 0 8px rgba(61, 255, 138, 0.5); }
+.spinner .glyph, .spinner .bar { color: var(--red); }
+.spinner .bar { letter-spacing: 0; text-shadow: 0 0 8px rgba(255, 42, 61, 0.5); }
 .spinner .verb {
   /* Claude'daki gibi kelimenin üstünden geçen parıltı */
-  background: linear-gradient(90deg, var(--accent-dim) 0%, var(--accent-dim) 35%, #eafff2 50%, var(--accent-dim) 65%, var(--accent-dim) 100%);
+  background: linear-gradient(90deg, var(--accent-dim) 0%, var(--accent-dim) 35%, #ffffff 50%, var(--accent-dim) 65%, var(--accent-dim) 100%);
   background-size: 250% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -335,7 +343,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
   font: 600 12px/1 var(--mono);
   letter-spacing: 0.08em;
   padding: 9px 14px;
-  color: #021;
+  color: #000;
   background: var(--accent);
   border: 1px solid var(--accent);
   border-radius: var(--r);
@@ -368,9 +376,9 @@ code { font-family: var(--mono); font-size: 0.92em; }
   border-radius: var(--r);
 }
 .persona-btn #persona-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.persona-btn .glyph { font-size: 9px; }
+.persona-btn .glyph { font-size: 9px; color: var(--red); }
 .persona-btn .caret { color: var(--text-3); }
-.persona-btn:hover, .persona-btn[aria-expanded="true"] { background: #0c1a13; }
+.persona-btn:hover, .persona-btn[aria-expanded="true"] { background: #161616; }
 .persona-btn:hover .caret { color: var(--accent); }
 
 .persona-menu {
@@ -409,7 +417,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 }
 .persona-opt .n::before { content: "○ "; color: var(--text-3); }
 .persona-opt.is-active .n { color: var(--accent); }
-.persona-opt.is-active .n::before { content: "● "; color: var(--accent); }
+.persona-opt.is-active .n::before { content: "● "; color: var(--red); }
 .persona-opt .p {
   display: block;
   margin-top: 3px;
@@ -451,7 +459,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .row { display: flex; gap: 8px; }
 
 input, textarea.field {
-  background: #020403;
+  background: #000;
   border: 1px solid var(--line-strong);
   border-radius: var(--r);
   padding: 9px 11px;
@@ -469,7 +477,7 @@ input:focus, textarea.field:focus { border-color: var(--accent); }
   background: var(--accent-soft);
   border-radius: var(--r);
 }
-.btn:hover { background: rgba(61, 255, 138, 0.18); }
+.btn:hover { background: rgba(255, 255, 255, 0.16); }
 .btn-plus {
   margin-left: auto;
   width: 34px;
@@ -480,9 +488,9 @@ input:focus, textarea.field:focus { border-color: var(--accent); }
   display: grid;
   place-items: center;
 }
-.btn-danger { color: var(--danger); border-color: rgba(255, 92, 108, 0.4); background: transparent; }
+.btn-danger { color: var(--danger); border-color: var(--red-line); background: transparent; }
 .btn-danger:hover { background: var(--danger-soft); }
-.btn-danger.is-armed { background: var(--danger); color: #200; }
+.btn-danger.is-armed { background: var(--danger); color: #fff; }
 .btn-ghost { color: var(--text-2); border-color: var(--line-strong); background: transparent; }
 .btn-ghost:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 
@@ -495,7 +503,7 @@ input:focus, textarea.field:focus { border-color: var(--accent); }
   border: 1px solid var(--line);
   background: var(--panel-2);
 }
-.persona-card.is-active { border-color: var(--accent-line); }
+.persona-card.is-active { border-color: var(--red-line); }
 .persona-card-head {
   display: flex;
   align-items: center;
@@ -514,9 +522,9 @@ input:focus, textarea.field:focus { border-color: var(--accent); }
   font: 10px/1 var(--mono);
   letter-spacing: 0.1em;
   padding: 5px 7px;
-  border: 1px solid var(--accent-line);
-  color: var(--accent);
-  background: var(--accent-soft);
+  border: 1px solid var(--red-line);
+  color: var(--red);
+  background: var(--red-soft);
 }
 .persona-card textarea.field {
   display: block;
