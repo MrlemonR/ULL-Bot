@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 
 from app import catalog, hardware
 from app.db import DEFAULT_MODEL
-from app.main import build_messages, clean_title, create_app
+from app import __version__
+from app import main as main_mod
+from app.main import build_messages, clean_title, create_app, normalize_url, resolve_ollama_url
 
 
 def ndjson(*chunks: dict) -> bytes:
@@ -33,8 +35,10 @@ class FakeOllama:
         ]
         self.fail_connect = False
         self.deleted: list[str] = []
+        self.hosts: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.hosts.append(f"{request.url.host}:{request.url.port}")
         if self.fail_connect:
             raise httpx.ConnectError("bağlantı reddedildi", request=request)
         path = request.url.path
@@ -407,3 +411,113 @@ def test_hardware_scan_runs_here():
 def test_js_served_as_javascript(client):
     # ES modülleri yanlış MIME türüyle gelirse tarayıcı yüklemez (Windows tuzağı).
     assert client.get("/js/main.js").headers["content-type"].startswith("text/javascript")
+
+
+
+# --- Ollama bağlantısı / başlangıç ---------------------------------------------------------
+
+
+def test_health_and_version(client):
+    assert client.get("/api/health").json() == {"app": "ull-bot", "version": __version__}
+    assert client.get("/api/bootstrap").json()["version"] == __version__
+
+
+def test_static_files_are_not_cached(client):
+    # Güncellemeden sonra tarayıcı eski arayüzü önbellekten açmasın.
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/js/chat.js").headers["cache-control"] == "no-cache"
+
+
+def test_normalize_url():
+    assert normalize_url("") == ""
+    assert normalize_url("0.0.0.0") == "http://127.0.0.1:11434"
+    assert normalize_url("0.0.0.0:11435") == "http://127.0.0.1:11435"
+    assert normalize_url("192.168.1.5") == "http://192.168.1.5:11434"
+    assert normalize_url("http://localhost:11434/") == "http://localhost:11434"
+
+
+def test_resolve_prefers_setting_then_env(monkeypatch):
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert resolve_ollama_url("") == "http://127.0.0.1:11434"
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:12000")
+    assert resolve_ollama_url("") == "http://127.0.0.1:12000"
+    monkeypatch.setenv("OLLAMA_URL", "http://pc:11434")
+    assert resolve_ollama_url("") == "http://pc:11434"
+    assert resolve_ollama_url("http://other:1") == "http://other:1"
+
+
+def test_changing_ollama_url_switches_client(tmp_path, ollama, monkeypatch):
+    monkeypatch.delenv("OLLAMA_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    with TestClient(create_app(data_dir=tmp_path, transport=httpx.MockTransport(ollama))) as c:
+        c.get("/api/models")
+        assert ollama.hosts[-1] == "127.0.0.1:11434"
+        s = c.put("/api/settings", json={"ollama_url": "10.0.0.7:11500"}).json()
+        assert s["ollama_url"] == "http://10.0.0.7:11500"
+        assert c.get("/api/models").json()["url"] == "http://10.0.0.7:11500"
+        assert ollama.hosts[-1] == "10.0.0.7:11500"
+        send(c, content="selam")
+        assert ollama.hosts[-1] == "10.0.0.7:11500"
+        # Boş = varsayılana dön.
+        c.put("/api/settings", json={"ollama_url": ""})
+        c.get("/api/models")
+        assert ollama.hosts[-1] == "127.0.0.1:11434"
+        assert c.put("/api/settings", json={"ollama_url": "http://a b"}).status_code == 422
+
+
+def test_ollama_test_endpoint(client, ollama):
+    r = client.post("/api/ollama/test", json={"url": "127.0.0.1:11434"}).json()
+    assert r["ok"] is True and r["models"] == 2 and r["url"] == "http://127.0.0.1:11434"
+    ollama.fail_connect = True
+    r = client.post("/api/ollama/test", json={"url": ""}).json()
+    assert r["ok"] is False and "bağlantı reddedildi" in r["error"]
+
+
+def test_models_error_explains_reason(client, ollama):
+    ollama.fail_connect = True
+    r = client.get("/api/models").json()
+    assert r["ok"] is False
+    assert "bağlantı reddedildi" in r["error"] and "ollama serve" in r["error"]
+
+
+def test_run_refuses_when_old_server_holds_port(monkeypatch, capsys):
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+    port = srv.getsockname()[1]
+    opened = []
+    monkeypatch.setenv("ULL_PORT", str(port))
+    monkeypatch.delenv("ULL_NO_BROWSER", raising=False)
+    monkeypatch.setattr("webbrowser.open", lambda *a, **k: opened.append(a))
+    monkeypatch.setattr(main_mod, "_running_version", lambda url: None)  # eski sürüm: /api/health yok
+    try:
+        with pytest.raises(SystemExit) as e:
+            main_mod.run()
+    finally:
+        srv.close()
+    assert e.value.code == 1
+    assert opened == []  # eski sunucuya tarayıcı açılmamalı
+    assert "ESKİ bir ULL-Bot" in capsys.readouterr().err
+
+
+def test_run_reuses_same_version(monkeypatch, capsys):
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen()
+    port = srv.getsockname()[1]
+    opened = []
+    monkeypatch.setenv("ULL_PORT", str(port))
+    monkeypatch.delenv("ULL_NO_BROWSER", raising=False)
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+    monkeypatch.setattr(main_mod, "_running_version", lambda url: __version__)
+    try:
+        main_mod.run()
+    finally:
+        srv.close()
+    assert opened == [f"http://127.0.0.1:{port}"]
+    assert "zaten çalışıyor" in capsys.readouterr().out

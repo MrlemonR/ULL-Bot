@@ -14,6 +14,8 @@ import json
 import mimetypes
 import os
 import re
+import socket
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -25,7 +27,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import catalog, hardware
+from app import __version__, catalog, hardware
 from app.db import DB
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -35,6 +37,60 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 # ve arayüz boş kalır; doğru türleri açıkça veriyoruz.
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/css", ".css")
+
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Tarayıcı arayüzü her açılışta sunucuya sorsun (değişmediyse 304 döner).
+
+    Önbellek başlığı olmayınca tarayıcı eski index.html'i ve JS'i tahmini bir
+    süre önbellekten açıyor; güncellemeden sonra "hâlâ eski sürüm" görünüyordu.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+def normalize_url(raw: str) -> str:
+    """'0.0.0.0', '127.0.0.1:11435', 'http://pc:11434/' gibi yazımları tam adrese çevir."""
+    raw = (raw or "").strip().rstrip("/")
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = "http://" + raw
+    scheme, rest = raw.split("://", 1)
+    host, _, port = rest.partition(":")
+    if host in ("", "0.0.0.0", "[::]", "::"):
+        host = "127.0.0.1"  # sunucunun "her yerden dinle" adresi; bağlanmak için yerel
+    port = port or "11434"
+    return f"{scheme}://{host}:{port}"
+
+
+def resolve_ollama_url(setting: str = "") -> str:
+    """Ayarlardaki adres > OLLAMA_URL > OLLAMA_HOST (Ollama'nın kendi değişkeni) > varsayılan."""
+    for candidate in (setting, os.environ.get("OLLAMA_URL", ""), os.environ.get("OLLAMA_HOST", "")):
+        url = normalize_url(candidate)
+        if url:
+            return url
+    return DEFAULT_OLLAMA_URL
+
+
+def describe_ollama_error(err: Exception, url: str) -> str:
+    if isinstance(err, httpx.ConnectError):
+        return (
+            f"{url} adresine bağlanılamadı (bağlantı reddedildi). Ollama çalışmıyor olabilir: "
+            "Windows'ta Ollama uygulamasını aç ya da terminalde `ollama serve` çalıştır."
+        )
+    if isinstance(err, httpx.TimeoutException):
+        return f"{url} cevap vermedi (zaman aşımı). Ollama donmuş ya da adres yanlış olabilir."
+    if isinstance(err, httpx.HTTPStatusError):
+        return f"{url} beklenmeyen bir cevap verdi (HTTP {err.response.status_code}). Bu adreste Ollama mı çalışıyor?"
+    if isinstance(err, ValueError):
+        return f"{url} adresindeki sunucu Ollama gibi görünmüyor (anlaşılmayan cevap)."
+    return f"{url}: {err!s}"
 
 
 # --- istek şemaları ----------------------------------------------------------------
@@ -58,6 +114,8 @@ class Appearance(BaseModel):
 
 class SettingsPatch(BaseModel):
     model: str | None = Field(None, min_length=1, max_length=200)
+    # Boş metin: ayarı sıfırla (ortam değişkeni / varsayılan adres kullanılır).
+    ollama_url: str | None = Field(None, max_length=300)
     temperature: float | None = Field(None, ge=0, le=2)
     num_ctx: int | None = Field(None, ge=512, le=262144)
     persona_reminder: bool | None = None
@@ -100,6 +158,10 @@ class SendIn(BaseModel):
     persona_id: str | None = None
     # İçerik yoksa: sondaki asistan cevabını silip son kullanıcı mesajını yeniden cevapla.
     regenerate: bool = False
+
+
+class OllamaTestIn(BaseModel):
+    url: str = Field(default="", max_length=300)
 
 
 class PullIn(BaseModel):
@@ -199,20 +261,43 @@ def create_app(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     data_dir = Path(data_dir or os.environ.get("ULL_DATA_DIR", "data"))
-    ollama_url = (ollama_url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
     db = DB(data_dir / "ull.db", legacy_state=data_dir / "state.json")
+    forced_url = normalize_url(ollama_url or "")  # testler için
+    retired: list[httpx.AsyncClient] = []
+
+    def effective_url() -> str:
+        return forced_url or resolve_ollama_url(db.get_settings().get("ollama_url", ""))
+
+    def make_client(url: str) -> httpx.AsyncClient:
+        # İlk token, model belleğe yüklenirken dakikalar sürebilir; okuma
+        # zaman aşımı bu yüzden cömert. Kullanıcı arayüzden her an durdurabilir.
+        # trust_env=False: Windows'taki sistem proxy'si / VPN ayarları yerel
+        # Ollama isteklerini başka yere yönlendirmesin.
+        return httpx.AsyncClient(
+            base_url=url, timeout=httpx.Timeout(10.0, read=600.0), transport=transport, trust_env=False,
+        )
+
+    def switch_ollama(url: str) -> None:
+        if url == app.state.ollama_url:
+            return
+        # Eski istemci kapatılmıyor: o anda akan bir cevap onu kullanıyor olabilir.
+        retired.append(app.state.ollama)
+        app.state.ollama = make_client(url)
+        app.state.ollama_url = url
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # İlk token, model belleğe yüklenirken dakikalar sürebilir; okuma
-        # zaman aşımı bu yüzden cömert. Kullanıcı arayüzden her an durdurabilir.
-        timeout = httpx.Timeout(10.0, read=600.0)
-        async with httpx.AsyncClient(base_url=ollama_url, timeout=timeout, transport=transport) as client:
-            app.state.ollama = client
+        app.state.ollama_url = effective_url()
+        app.state.ollama = make_client(app.state.ollama_url)
+        try:
             yield
-        db.close()
+        finally:
+            for client in [app.state.ollama, *retired]:
+                await client.aclose()
+            db.close()
 
-    app = FastAPI(title="ULL-Bot", lifespan=lifespan)
+    app = FastAPI(title="ULL-Bot", version=__version__, lifespan=lifespan)
+    app.state.effective_ollama_url = effective_url
 
     def settings() -> dict:
         s = db.get_settings()
@@ -243,8 +328,14 @@ def create_app(
             "personas": db.list_personas(),
             "projects": db.list_projects(),
             "chats": db.list_chats(),
-            "ollama_url": ollama_url,
+            "ollama_url": app.state.ollama_url,
+            "ollama_url_default": resolve_ollama_url(""),
+            "version": __version__,
         }
+
+    @app.get("/api/health")
+    def health():
+        return {"app": "ull-bot", "version": __version__}
 
     @app.get("/api/settings")
     def get_settings():
@@ -255,7 +346,13 @@ def create_app(
         patch = body.model_dump(exclude_unset=True, exclude_none=True)
         if "model" in patch:
             patch["model"] = patch["model"].strip()
+        if "ollama_url" in patch:
+            patch["ollama_url"] = normalize_url(patch["ollama_url"])
+            if patch["ollama_url"] and not re.match(r"^https?://[^/\s]+$", patch["ollama_url"]):
+                raise HTTPException(422, "Geçersiz adres. Örnek: http://127.0.0.1:11434")
         db.update_settings(patch)
+        if "ollama_url" in patch:
+            switch_ollama(effective_url())
         return settings()
 
     # --- kişilikler ----------------------------------------------------------------------
@@ -476,14 +573,11 @@ def create_app(
                             return
                 mid = save({})
                 yield _line(type="done", message_id=mid, model=model, first_answer=is_first_answer, chat=db.get_chat(chat_id))
-            except httpx.ConnectError:
-                yield _line(
-                    type="error",
-                    message=f"Ollama'ya bağlanılamadı ({ollama_url}). Ollama çalışıyor mu? (ollama serve)",
-                )
+            except httpx.ConnectError as e:
+                yield _line(type="error", message=describe_ollama_error(e, app.state.ollama_url))
             except httpx.HTTPError as e:
                 save({"error": True})
-                yield _line(type="error", message=f"Ollama bağlantı hatası: {e!s}")
+                yield _line(type="error", message=describe_ollama_error(e, app.state.ollama_url))
             finally:
                 # Kullanıcı "durdur"a bastı (bağlantı koptu): yarım cevap kaybolmasın.
                 save({"stopped": True})
@@ -492,13 +586,14 @@ def create_app(
 
     # --- modeller ------------------------------------------------------------------------------
 
-    async def installed_models() -> list[dict] | None:
+    async def installed_models() -> tuple[list[dict] | None, str]:
+        """(modeller, hata). Ollama'ya ulaşılamazsa modeller None, hata açıklamalı."""
         try:
-            r = await app.state.ollama.get("/api/tags")
+            r = await app.state.ollama.get("/api/tags", timeout=5)
             r.raise_for_status()
             raw = r.json().get("models", [])
-        except (httpx.HTTPError, ValueError):
-            return None
+        except (httpx.HTTPError, ValueError, AttributeError) as e:
+            return None, describe_ollama_error(e, app.state.ollama_url)
         out = []
         for m in raw:
             d = m.get("details") or {}
@@ -513,19 +608,36 @@ def create_app(
                 "desc": info["desc"] if info else "",
                 "tags": info["tags"] if info else [],
             })
-        return sorted(out, key=lambda m: m["name"])
+        return sorted(out, key=lambda m: m["name"]), ""
 
     @app.get("/api/models")
     async def list_models():
-        models = await installed_models()
+        models, error = await installed_models()
         if models is None:
-            return {"ok": False, "models": [], "error": f"Ollama'ya ulaşılamadı ({ollama_url})"}
-        return {"ok": True, "models": models}
+            return {"ok": False, "models": [], "error": error, "url": app.state.ollama_url}
+        return {"ok": True, "models": models, "url": app.state.ollama_url}
+
+    @app.post("/api/ollama/test")
+    async def test_ollama(body: OllamaTestIn):
+        """Verilen adreste (boşsa geçerli adreste) Ollama var mı? Ayarı değiştirmez."""
+        url = normalize_url(body.url) or app.state.ollama_url
+        try:
+            async with httpx.AsyncClient(base_url=url, timeout=4, transport=transport, trust_env=False) as c:
+                r = await c.get("/api/tags")
+                r.raise_for_status()
+                count = len(r.json().get("models", []))
+                try:
+                    version = (await c.get("/api/version")).json().get("version", "")
+                except (httpx.HTTPError, ValueError):
+                    version = ""
+        except (httpx.HTTPError, ValueError, AttributeError) as e:
+            return {"ok": False, "url": url, "error": describe_ollama_error(e, url)}
+        return {"ok": True, "url": url, "models": count, "version": version}
 
     @app.get("/api/models/recommend")
     async def recommend_models():
         hw = await run_in_threadpool(hardware.scan)
-        models = await installed_models()
+        models, _ = await installed_models()
         names = {m["name"] for m in models or []}
         return {
             "hardware": hw,
@@ -565,10 +677,8 @@ def create_app(
                             yield _line(type="done", name=name)
                             return
                 yield _line(type="done", name=name)
-            except httpx.ConnectError:
-                yield _line(type="error", message=f"Ollama'ya bağlanılamadı ({ollama_url})")
             except httpx.HTTPError as e:
-                yield _line(type="error", message=f"İndirme hatası: {e!s}")
+                yield _line(type="error", message=describe_ollama_error(e, app.state.ollama_url))
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
 
@@ -576,15 +686,42 @@ def create_app(
     async def delete_model(name: str):
         try:
             r = await app.state.ollama.request("DELETE", "/api/delete", json={"model": name})
-        except httpx.HTTPError:
-            raise HTTPException(502, f"Ollama'ya ulaşılamadı ({ollama_url})")
+        except httpx.HTTPError as e:
+            raise HTTPException(502, describe_ollama_error(e, app.state.ollama_url))
         if r.status_code != 200:
             raise HTTPException(r.status_code, _ollama_error(r.status_code, r.text, name))
         return {"ok": True}
 
     # Arayüz en sonda: "/" altındaki her şeyi yakalar, API rotaları önce eşleşir.
-    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+    app.mount("/", NoCacheStaticFiles(directory=WEB_DIR, html=True), name="web")
     return app
+
+
+def _port_busy(host: str, port: int) -> bool:
+    target = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex((target, port)) == 0
+
+
+def _running_version(url: str) -> str | None:
+    """Portta çalışan şey ULL-Bot ise sürümü; eski sürüm ya da başka bir program ise None."""
+    try:
+        r = httpx.get(f"{url}/api/health", timeout=1.5, trust_env=False)
+        data = r.json()
+        return data.get("version") if data.get("app") == "ull-bot" else None
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+
+
+def _check_ollama(url: str) -> str:
+    try:
+        r = httpx.get(f"{url}/api/tags", timeout=3, trust_env=False)
+        r.raise_for_status()
+        n = len(r.json().get("models", []))
+        return f"bağlı ✓ ({n} model kurulu)" if n else "bağlı ✓ ama hiç model yok — Ayarlar → Modeller'den indir"
+    except (httpx.HTTPError, ValueError, AttributeError) as e:
+        return "BAĞLANILAMADI ✗ — " + describe_ollama_error(e, url)
 
 
 def run() -> None:
@@ -595,11 +732,33 @@ def run() -> None:
 
     host = os.environ.get("ULL_HOST", "127.0.0.1")
     port = int(os.environ.get("ULL_PORT", "8765"))
-    url = f"http://{host}:{port}"
-    print(f"ULL-Bot → {url}")
-    if os.environ.get("ULL_NO_BROWSER") != "1":
+    url = f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}"
+    open_browser = os.environ.get("ULL_NO_BROWSER") != "1"
+
+    if _port_busy(host, port):
+        running = _running_version(url)
+        if running == __version__:
+            print(f"ULL-Bot v{__version__} zaten çalışıyor → {url}")
+            if open_browser:
+                webbrowser.open(url)
+            return
+        print(
+            f"\nHATA: {port} portu kullanımda"
+            + (f" — ULL-Bot v{running} çalışıyor." if running else " — büyük ihtimalle ESKİ bir ULL-Bot hâlâ açık.")
+            + "\nÖnce onu kapat: açık kalan terminal penceresinde Ctrl+C"
+            " (Windows'ta bulamazsan Görev Yöneticisi → python.exe → Görevi sonlandır)."
+            f"\nYa da başka port kullan: ULL_PORT=8766\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    app = create_app()
+    ollama_url = app.state.effective_ollama_url()
+    print(f"ULL-Bot v{__version__} → {url}")
+    print(f"Ollama ({ollama_url}): {_check_ollama(ollama_url)}")
+    if open_browser:
         threading.Timer(1.2, webbrowser.open, args=[url]).start()
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -19,12 +19,15 @@ export async function refreshModels() {
   S.online = res.ok;
   S.installed = res.models || [];
   S.ollamaError = res.error || "";
+  if (res.url) S.ollamaUrl = res.url;
 
   const conn = $("#conn");
   conn.classList.toggle("is-ok", res.ok);
   conn.classList.toggle("is-bad", !res.ok);
   $("span", conn).textContent = res.ok ? "ollama" : "ollama yok";
-  conn.title = res.ok ? `Ollama bağlı · ${S.installed.length} model` : res.error || "";
+  conn.title = res.ok
+    ? `Ollama bağlı (${S.ollamaUrl}) · ${S.installed.length} model`
+    : `${res.error || "Ollama'ya ulaşılamadı"}\nAyarlamak için tıkla.`;
   renderButton();
   emit("models");
   return res;

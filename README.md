@@ -38,11 +38,22 @@ karakterlerle Matrix yağmuru akar.
 
    Tarayıcı kendiliğinden `http://127.0.0.1:8765` adresini açar.
 
+## Sorun giderme
+
+- **Güncelledim ama eski hali açılıyor** — eski ULL-Bot penceresi hâlâ açık
+  olabilir: kapat (Ctrl+C) ve `uv run ull-bot` ile yeniden başlat. Port
+  doluysa ULL-Bot bunu söyleyip çıkar. Tarayıcıda bir kez Ctrl+F5 yap.
+  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.3.0`).
+- **Ollama'ya bağlanamıyor** — başlarken terminalde `Ollama (...): ...`
+  satırı sebebi yazar. Ollama açık olmalı (Windows'ta Ollama uygulaması ya da
+  `ollama serve`). Farklı adres/port için: *Ayarlar → Modeller → Ollama
+  bağlantısı* (TEST ET ile dene) ya da `OLLAMA_URL` / `OLLAMA_HOST`.
+
 ## Ortam değişkenleri
 
 | Değişken | Varsayılan | Açıklama |
 | --- | --- | --- |
-| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama adresi |
+| `OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama adresi (ayarlardan da değiştirilebilir; yoksa `OLLAMA_HOST` okunur) |
 | `ULL_DATA_DIR` | `./data` | Sohbetler, projeler, kişilikler ve ayarlar (`ull.db`) |
 | `ULL_HOST` | `127.0.0.1` | Sunucunun dinlediği adres |
 | `ULL_PORT` | `8765` | Port |

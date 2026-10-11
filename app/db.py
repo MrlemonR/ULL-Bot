@@ -36,6 +36,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # bir hatırlatma eklemek kişiliği ayakta tutuyor.
     "persona_reminder": True,
     "auto_title": True,
+    # Boşsa ortam değişkeni (OLLAMA_URL / OLLAMA_HOST) ya da varsayılan adres.
+    "ollama_url": "",
     "appearance": {},
 }
 

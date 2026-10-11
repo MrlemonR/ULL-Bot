@@ -167,6 +167,7 @@ let scanFilter = "best";
 const pulls = new Map(); // indirilen modeller: ad → {controller, status, completed, total}
 
 function renderModels() {
+  renderConnection();
   const installedPanel = panel("KURULU MODELLER", "Sohbette kullanılacak modeli seç. Sağ üstteki model adından da değiştirebilirsin.",
     button("↻ YENİLE", "btn-ghost", async () => { await refreshModels(); }));
   installedPanel.appendChild(el("div", "", "")).id = "installed-list";
@@ -206,12 +207,54 @@ function renderModels() {
   nameIn.addEventListener("input", () => { prog.dataset.pull = nameIn.value.trim(); });
 }
 
+function renderConnection() {
+  const urlIn = el("input");
+  urlIn.spellcheck = false;
+  urlIn.placeholder = S.ollamaUrlDefault || "http://127.0.0.1:11434";
+  urlIn.value = S.settings.ollama_url || "";
+  const status = el("p", "status");
+  status.id = "conn-status";
+  status.style.marginTop = "0.7rem";
+
+  const test = button("TEST ET", "btn-ghost", async () => {
+    setStatus(status, "… deneniyor", null);
+    try {
+      const r = await api("/api/ollama/test", { method: "POST", body: { url: urlIn.value.trim() } });
+      setStatus(status, r.ok ? `✓ ${r.url} — Ollama${r.version ? " " + r.version : ""} çalışıyor · ${r.models} model` : `✖ ${r.error}`, r.ok ? "ok" : "bad");
+    } catch (err) {
+      setStatus(status, "✖ " + err.message, "bad");
+    }
+  });
+  const save = button("KAYDET", "btn", async () => {
+    await saveSettings({ ollama_url: urlIn.value.trim() });
+    await refreshModels();
+    paintConnection();
+  });
+  urlIn.addEventListener("keydown", (e) => { if (e.key === "Enter") save.click(); });
+
+  const p = panel("OLLAMA BAĞLANTISI",
+    "ULL-Bot modellerle Ollama üzerinden konuşur. Ollama'nın açık olduğundan emin ol: Windows'ta Başlat menüsünden " +
+    "<b>Ollama</b>'yı aç (sistem tepsisinde lama simgesi çıkar) ya da terminalde <code>ollama serve</code> çalıştır. " +
+    "Başka bir adreste/portta çalışıyorsa buraya yaz; boş bırakırsan varsayılan adres kullanılır.");
+  const r = el("div", "row");
+  r.append(urlIn, test, save);
+  p.append(r, status);
+  paintConnection();
+}
+
+function paintConnection() {
+  const status = $("#conn-status");
+  if (!status) return;
+  if (S.online) setStatus(status, `✓ bağlı — ${S.ollamaUrl} · ${S.installed.length} model kurulu`, "ok");
+  else if (S.online === false) setStatus(status, `✖ ${S.ollamaError}`, "bad");
+}
+
 function renderInstalled() {
   const box = $("#installed-list");
   if (!box) return;
   box.innerHTML = "";
   if (!S.online) {
-    box.appendChild(el("p", "status is-bad", esc(S.ollamaError || "Ollama'ya ulaşılamadı.") + " Ollama'yı başlat: <code>ollama serve</code>"));
+    box.appendChild(el("p", "status is-bad", "Ollama'ya bağlanılamadı — yukarıdaki bağlantı ayarına bak."));
     return;
   }
   if (!S.installed.length) {
@@ -544,6 +587,7 @@ async function addPersona() {
 
 on("models", () => {
   if (page !== "models") return;
+  paintConnection();
   renderInstalled();
   renderScan();
 });

@@ -7,7 +7,10 @@ export const S = {
   chats: [],          // özetler: {id, title, project_id, pinned, updated_at}
   installed: [],      // Ollama'daki modeller
   online: null,
+  ollamaError: "",
   ollamaUrl: "",
+  ollamaUrlDefault: "",
+  version: "",
 };
 
 const listeners = new Map();

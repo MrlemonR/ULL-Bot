@@ -144,7 +144,13 @@ async function boot() {
     data = await api("/api/bootstrap");
   } catch (err) {
     showView("chat");
-    $("#empty-title").textContent = "Sunucuya ulaşılamadı: " + err.message;
+    // Yeni arayüz + eski sunucu: güncellemeden sonra eski pencere açık kalmış.
+    const stale = /not found|404/i.test(err.message);
+    $("#empty-title").textContent = stale
+      ? "Arayüz güncel ama arkada ESKİ bir ULL-Bot sunucusu çalışıyor."
+      : "ULL-Bot sunucusuna ulaşılamadı: " + err.message;
+    $("#empty-meta").textContent =
+      "Açık kalan ULL-Bot terminal penceresini kapat (Ctrl+C), sonra yeniden başlat: uv run ull-bot";
     return;
   }
   S.settings = data.settings;
@@ -152,6 +158,9 @@ async function boot() {
   S.projects = data.projects;
   S.chats = data.chats;
   S.ollamaUrl = data.ollama_url;
+  S.ollamaUrlDefault = data.ollama_url_default;
+  S.version = data.version;
+  $("#side-foot").textContent = `ULL-Bot v${data.version}`;
   applyAppearance(S.settings.appearance);
 
   window.addEventListener("hashchange", navigate);

@@ -45,6 +45,7 @@ function renderEmpty(error) {
   const persona = activePersona();
   const bits = [`model: ${S.settings.model || "—"}`, `kişilik: ${persona ? persona.name : "yok"}`];
   if (p) bits.push(p.context.trim() ? "proje bağlamı her mesajda modele verilir" : "projenin bağlamı boş");
+  if (S.online === false) bits.push("⚠ Ollama'ya bağlanılamadı — sağ üstteki göstergeye tıkla");
   $("#empty-meta").textContent = bits.join(" · ");
 }
 
