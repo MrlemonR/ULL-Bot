@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -273,41 +274,107 @@ def check_env(venv: Path) -> dict:
     return result
 
 
+# Sürücü sürümü → desteklediği en yüksek CUDA (Linux/Windows en düşük sürücüleri).
+DRIVER_CUDA = ((580, "13.0"), (570, "12.8"), (560, "12.6"), (550, "12.4"), (545, "12.3"),
+               (535, "12.2"), (530, "12.1"), (525, "12.0"), (520, "11.8"))
+TORCH_INDEX = "https://download.pytorch.org/whl/"
+
+
+def cuda_from_driver(driver: str | None) -> str | None:
+    try:
+        major = int(str(driver).split(".")[0])
+    except (TypeError, ValueError):
+        return None
+    return next((cuda for need, cuda in DRIVER_CUDA if major >= need), None)
+
+
 def nvidia_info() -> dict | None:
+    """NVIDIA sürücüsü ve desteklediği CUDA sürümü (kart yoksa None)."""
     exe = shutil.which("nvidia-smi")
     if not exe:
         return None
+    info: dict[str, Any] = {"driver": None, "cuda_driver": None}
+    run = lambda args: subprocess.run(  # noqa: E731
+        [exe, *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30, creationflags=_no_window(),
+    ).stdout or ""
+    # Önce düz çıktıdaki "CUDA Version: X.Y"; okunamazsa sürücü sürümünden çıkar.
+    # (Kullanıcıda ilk yol boş döndü ve CPU'lu PyTorch kuruldu.)
     try:
-        out = subprocess.run([exe], capture_output=True, text=True, timeout=10, creationflags=_no_window()).stdout
+        m = re.search(r"CUDA Version\s*:\s*(\d+)\.(\d+)", run([]))
+        if m:
+            info["cuda_driver"] = f"{m.group(1)}.{m.group(2)}"
     except (OSError, subprocess.SubprocessError):
-        return None
-    m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", out)
-    return {"cuda_driver": f"{m.group(1)}.{m.group(2)}" if m else None}
+        pass
+    try:
+        line = run(["--query-gpu=driver_version", "--format=csv,noheader"]).strip().splitlines()
+        info["driver"] = line[0].strip() if line else None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not info["cuda_driver"]:
+        info["cuda_driver"] = cuda_from_driver(info["driver"])
+    return info
 
 
-def torch_index(nvidia: dict | None) -> str:
-    """Sürücünün desteklediği CUDA sürümüne uygun PyTorch paketi."""
-    if not nvidia or not nvidia.get("cuda_driver"):
-        return "https://download.pytorch.org/whl/cpu"
-    major, minor = map(int, nvidia["cuda_driver"].split("."))
+def torch_index(nvidia: dict | None, system: str | None = None) -> str | None:
+    """Kurulacak PyTorch paketinin adresi; None = PyPI'nin varsayılanı."""
+    system = system or platform.system()
+    if system == "Darwin":
+        return None  # macOS: PyPI paketi Metal (MPS) destekli
+    if not nvidia:
+        return TORCH_INDEX + "cpu"
+    cuda = nvidia.get("cuda_driver")
+    if not cuda:
+        # Kart var ama CUDA sürümü okunamadı: CPU'ya düşme, geniş uyumlu sürümü seç.
+        return TORCH_INDEX + "cu126"
+    major, minor = map(int, cuda.split("."))
     v = major * 10 + minor
+    if v >= 130:
+        # Linux'ta PyPI'deki torch zaten CUDA 13 ile geliyor; Windows'ta PyPI paketi CPU'lu.
+        return None if system == "Linux" else TORCH_INDEX + "cu130"
     for need, tag in ((128, "cu128"), (126, "cu126"), (124, "cu124"), (121, "cu121"), (118, "cu118")):
         if v >= need:
-            return f"https://download.pytorch.org/whl/{tag}"
-    return "https://download.pytorch.org/whl/cpu"
+            return TORCH_INDEX + tag
+    return TORCH_INDEX + "cpu"
 
 
-def install_steps(venv: Path) -> list[dict]:
-    nvidia = nvidia_info()
-    py = venv_python(venv)
+def repair_indexes(nvidia: dict | None) -> list[str]:
+    """PyTorch GPU'yu göremediğinde sırayla denenecek CUDA paketleri."""
+    first = torch_index(nvidia)
+    out = [first] if first and not first.endswith("/cpu") else []
+    for tag in ("cu128", "cu126", "cu124"):
+        if TORCH_INDEX + tag not in out:
+            out.append(TORCH_INDEX + tag)
+    return out[:3]
+
+
+def pip_command(venv: Path) -> list[str]:
     uv = shutil.which("uv")
+    py = venv_python(venv)
+    return [uv, "pip", "install", "--python", str(py)] if uv else [str(py), "-m", "pip", "install"]
+
+
+def torch_cmd(venv: Path, index: str | None, reinstall: bool = False) -> list[str]:
+    pip = pip_command(venv)
+    if reinstall:
+        # Kurulu CPU paketi "torch" isteğini zaten karşılıyor; zorla yeniden kurulmalı.
+        uses_uv = pip[1] == "pip"
+        pip += ["--reinstall-package", "torch", "--reinstall-package", "torchvision"] if uses_uv else ["--force-reinstall"]
+    return pip + ["torch", "torchvision"] + (["--index-url", index] if index else [])
+
+
+def install_steps(venv: Path, nvidia: dict | None) -> list[dict]:
+    uv = shutil.which("uv")
+    steps: list[dict] = []
+    if venv.exists():
+        # "YENİDEN KUR": uv var olan ortamın üstüne yazmayı reddediyor (--clear ister); önce sil.
+        steps.append({"label": "eski ortam siliniyor", "fn": lambda: shutil.rmtree(venv)})
     if uv:
-        steps = [{"label": "Python ortamı oluşturuluyor", "cmd": [uv, "venv", str(venv), "--python", "3.11", "--seed"]}]
-        pip = [uv, "pip", "install", "--python", str(py)]
+        steps.append({"label": "Python ortamı oluşturuluyor", "cmd": [uv, "venv", str(venv), "--python", "3.11", "--seed"]})
     else:
-        steps = [{"label": "Python ortamı oluşturuluyor", "cmd": [sys.executable, "-m", "venv", str(venv)]}]
-        pip = [str(py), "-m", "pip", "install"]
-    steps.append({"label": "PyTorch indiriliyor (büyük, birkaç GB)", "cmd": pip + ["torch", "--index-url", torch_index(nvidia)]})
+        steps.append({"label": "Python ortamı oluşturuluyor", "cmd": [sys.executable, "-m", "venv", str(venv)]})
+    steps.append({"label": "PyTorch indiriliyor (büyük, birkaç GB)", "cmd": torch_cmd(venv, torch_index(nvidia))})
+    pip = pip_command(venv)
     if nvidia:
         # Unsloth NVIDIA'da 2 kat hızlı ve yarı bellek; kurulamazsa PEFT ile devam edilir.
         steps.append({"label": "Unsloth kuruluyor", "cmd": pip + ["unsloth"], "optional": True})
@@ -391,21 +458,30 @@ class Trainer:
     def busy(self) -> bool:
         return self.job is not None and self.job.state == "running"
 
-    def start_install(self) -> Job:
+    def start_install(self, repair_only: bool = False) -> Job:
+        """Ortamı (yeniden) kurar. repair_only: yalnızca PyTorch'u GPU'lu sürümle değiştir."""
         with self.lock:
             if self.busy():
                 raise RuntimeError("Başka bir iş çalışıyor")
-            job = Job("install", "Eğitim ortamı kurulumu")
+            job = Job("install", "PyTorch onarımı" if repair_only else "Eğitim ortamı kurulumu")
             self.job = job
-        steps = install_steps(self.venv)
-        threading.Thread(target=self._run_install, args=(job, steps), daemon=True).start()
+        threading.Thread(target=self._run_install, args=(job, repair_only), daemon=True).start()
         return job
 
-    def _run_install(self, job: Job, steps: list[dict]) -> None:
+    def _run_install(self, job: Job, repair_only: bool) -> None:
         try:
+            nvidia = nvidia_info()
+            job.log.append(
+                f"NVIDIA: sürücü {nvidia.get('driver') or '?'} · CUDA {nvidia.get('cuda_driver') or '?'}" if nvidia
+                else "NVIDIA ekran kartı bulunamadı (nvidia-smi yok)"
+            )
+            steps = [] if repair_only else install_steps(self.venv, nvidia)
             for i, step in enumerate(steps, 1):
                 job.stage = f"{i}/{len(steps)} · {step['label']}"
                 job.progress = (i - 1) / len(steps)
+                if "fn" in step:
+                    step["fn"]()
+                    continue
                 code = self._run(job, step["cmd"])
                 if job.cancelled:
                     return self._finish(job, "cancelled", "İptal edildi")
@@ -413,14 +489,31 @@ class Trainer:
                     return self._finish(job, "error", f"Komut başarısız ({code}): {' '.join(step['cmd'][:4])} …")
                 if code != 0:
                     job.log.append(f"(isteğe bağlı adım atlandı: {step['label']})")
-            job.progress = 1
+
             self._env_cache = None
             env = self.env(refresh=True)
-            if env.get("ready"):
-                msg = "Ortam hazır" + (f" · GPU: {env.get('gpu')}" if env.get("cuda") else " · GPU kullanılamıyor (CPU)")
-                return self._finish(job, "done", msg)
-            reason = env.get("torch_error") or env.get("probe_error") or ("eksik paket: " + ", ".join(env.get("missing") or []))
-            self._finish(job, "error", f"Kurulum bitti ama ortam hazır değil — {reason}")
+            # NVIDIA kart var ama PyTorch görmüyor (CPU paketi kurulmuş, ya da başka bir paket
+            # torch'u CPU sürümüyle değiştirmiş): GPU'lu paketleri sırayla dene.
+            if nvidia and env.get("torch") and not env.get("cuda"):
+                for index in repair_indexes(nvidia):
+                    tag = index.rsplit("/", 1)[-1]
+                    job.stage = f"PyTorch GPU sürümüyle değiştiriliyor ({tag})"
+                    job.progress = None
+                    code = self._run(job, torch_cmd(self.venv, index, reinstall=True))
+                    if job.cancelled:
+                        return self._finish(job, "cancelled", "İptal edildi")
+                    env = self.env(refresh=True)
+                    if code == 0 and env.get("cuda"):
+                        break
+            job.progress = 1
+            if not env.get("ready"):
+                reason = env.get("torch_error") or env.get("probe_error") or ("eksik paket: " + ", ".join(env.get("missing") or []))
+                return self._finish(job, "error", f"Kurulum bitti ama ortam hazır değil — {reason}")
+            if nvidia and not env.get("cuda"):
+                return self._finish(job, "error", "Kütüphaneler hazır ama PyTorch ekran kartını göremiyor. "
+                                    "NVIDIA sürücüsünü güncellemeyi dene (nvidia-smi çalışıyor mu?), sonra PYTORCH'U ONAR.")
+            msg = "Ortam hazır" + (f" · GPU: {env.get('gpu')} ({env.get('vram_gb')} GB)" if env.get("cuda") else " · CPU ile")
+            self._finish(job, "done", msg)
         except Exception as e:  # beklenmeyen her şey arayüzde görünsün
             self._finish(job, "error", f"Hata: {e}")
 

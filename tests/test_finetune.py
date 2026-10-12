@@ -62,10 +62,63 @@ def test_model_name_and_modelfile():
 
 
 def test_torch_index_follows_driver():
-    assert finetune.torch_index(None).endswith("/cpu")
-    assert finetune.torch_index({"cuda_driver": "12.9"}).endswith("/cu128")
-    assert finetune.torch_index({"cuda_driver": "12.4"}).endswith("/cu124")
-    assert finetune.torch_index({"cuda_driver": "11.2"}).endswith("/cpu")
+    ti = finetune.torch_index
+    assert ti(None, "Linux").endswith("/cpu")
+    assert ti({"cuda_driver": "12.9"}, "Linux").endswith("/cu128")
+    assert ti({"cuda_driver": "12.4"}, "Windows").endswith("/cu124")
+    assert ti({"cuda_driver": "11.2"}, "Linux").endswith("/cpu")
+    # CUDA 13 sürücü: Linux'ta PyPI'deki torch zaten CUDA'lı; Windows'ta PyPI CPU'lu → cu130.
+    assert ti({"cuda_driver": "13.0"}, "Linux") is None
+    assert ti({"cuda_driver": "13.0"}, "Windows").endswith("/cu130")
+    # Kullanıcıdaki durum: kart var, CUDA sürümü okunamadı → CPU'ya DÜŞMEMELİ.
+    assert ti({"cuda_driver": None, "driver": None}, "Linux").endswith("/cu126")
+    assert ti(None, "Darwin") is None
+
+
+def test_cuda_from_driver():
+    assert finetune.cuda_from_driver("580.82.07") == "13.0"
+    assert finetune.cuda_from_driver("572.16") == "12.8"
+    assert finetune.cuda_from_driver("535.104.05") == "12.2"
+    assert finetune.cuda_from_driver("470.1") is None
+    assert finetune.cuda_from_driver(None) is None
+
+
+def test_reinstall_removes_old_venv_first(tmp_path):
+    venv = tmp_path / ".train-venv"
+    venv.mkdir()
+    steps = finetune.install_steps(venv, {"driver": "580.1", "cuda_driver": "13.0"})
+    assert steps[0]["label"] == "eski ortam siliniyor"
+    steps[0]["fn"]()
+    assert not venv.exists()
+    assert "--clear" not in steps[1]["cmd"]  # eski uv sürümleri bu bayrağı tanımıyor
+    torch_step = next(st for st in steps if st["label"].startswith("PyTorch"))
+    assert "torch" in torch_step["cmd"] and "torchvision" in torch_step["cmd"]
+    assert any("unsloth" in st.get("cmd", []) for st in steps)
+
+
+def test_repair_swaps_cpu_torch_for_cuda(tmp_path, monkeypatch):
+    """PyTorch GPU'yu görene kadar CUDA paketleri sırayla denenir."""
+    nvidia = {"driver": "570.1", "cuda_driver": "12.8"}
+    monkeypatch.setattr(finetune, "nvidia_info", lambda: nvidia)
+    tried = []
+    monkeypatch.setattr(finetune, "torch_cmd", lambda venv, index, reinstall=False: (tried.append((index, reinstall)), [sys.executable, "-c", "print('kuruldu')"])[1])
+    envs = iter([
+        {"ready": True, "torch": "2.14.1+cpu", "cuda": False, "exists": True},
+        {"ready": True, "torch": "2.9.0+cu128", "cuda": False, "exists": True},
+        {"ready": True, "torch": "2.9.0+cu126", "cuda": True, "gpu": "RTX 4070", "vram_gb": 12.0, "exists": True},
+    ])
+    monkeypatch.setattr(finetune, "check_env", lambda venv: next(envs))
+    t = finetune.Trainer(tmp_path, tmp_path / "data", ollama_url=lambda: "", on_model_ready=lambda n: None)
+    job = t.start_install(repair_only=True)
+    for _ in range(200):
+        if job.state != "running":
+            break
+        time.sleep(0.02)
+    assert job.state == "done", job.message
+    assert "RTX 4070" in job.message
+    assert [i.rsplit("/", 1)[-1] for i, _ in tried] == ["cu128", "cu126"]
+    assert all(r for _, r in tried)  # zorla yeniden kurulum
+
 
 
 # --- API: veri setleri, ortam, eğitim -------------------------------------------------------

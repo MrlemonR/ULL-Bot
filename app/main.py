@@ -897,6 +897,13 @@ def create_app(
         except RuntimeError as e:
             raise HTTPException(409, str(e))
 
+    @app.post("/api/train/env/repair")
+    def train_repair():
+        try:
+            return trainer.start_install(repair_only=True).snapshot()
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+
     @app.get("/api/train/status")
     def train_status():
         return {"job": trainer.status(), "history": trainer.history()}

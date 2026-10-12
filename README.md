@@ -116,7 +116,10 @@ Qwen/Gemma şimdilik listede yok.
 - **Güncelledim ama eski hali açılıyor** — eski ULL-Bot penceresi hâlâ açık
   olabilir: kapat (Ctrl+C) ve `uv run ull-bot` ile yeniden başlat. Port
   doluysa ULL-Bot bunu söyleyip çıkar. Tarayıcıda bir kez Ctrl+F5 yap.
-  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.6.0`).
+  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.6.1`).
+- **İnce ayar: PyTorch ekran kartını görmüyor** (`+cpu` yazıyor, CUDA ✗) —
+  *Ayarlar → İnce ayar → PYTORCH'U ONAR*: yalnızca PyTorch'u sürücüne uygun
+  CUDA sürümüyle değiştirir. Olmazsa NVIDIA sürücüsünü güncelle.
 - **Ollama'ya bağlanamıyor** — başlarken terminalde `Ollama (...): ...`
   satırı sebebi yazar. Ollama açık olmalı (Windows'ta Ollama uygulaması ya da
   `ollama serve`). Farklı adres/port için: *Ayarlar → Modeller → Ollama

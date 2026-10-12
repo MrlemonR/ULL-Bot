@@ -156,7 +156,8 @@ function renderEnv() {
   const yes = (v) => (v ? `<span class="ok">✓</span> ${esc(v)}` : '<span class="no">✗</span> yok');
   const gpu = e.cuda
     ? `${esc(e.gpu)}<div class="s">${e.vram_gb} GB VRAM</div>`
-    : e.nvidia ? `NVIDIA bulundu<div class="s">sürücü CUDA ${esc(e.nvidia.cuda_driver || "?")} — PyTorch kurulunca kullanılacak</div>`
+    : e.nvidia ? `NVIDIA bulundu<div class="s">sürücü ${esc(e.nvidia.driver || "?")} · CUDA ${esc(e.nvidia.cuda_driver || "?")}` +
+      `${e.torch ? " — PyTorch göremiyor" : " — PyTorch kurulunca kullanılacak"}</div>`
       : `<span class="no">bulunamadı</span><div class="s">eğitim CPU'da çok yavaş olur</div>`;
   box.innerHTML =
     `<div class="hw-grid">` +
@@ -170,13 +171,17 @@ function renderEnv() {
 
   const installing = job && job.kind === "install" && job.state === "running";
   right.appendChild(button("↻ KONTROL ET", "btn-ghost", () => loadEnv(true)));
+  const needsRepair = e.exists && e.torch && !e.cuda && e.nvidia;
   if (!installing) {
-    right.appendChild(button(e.ready ? "YENİDEN KUR" : "ORTAMI KUR", e.ready ? "btn-ghost" : "btn-solid", startInstall));
+    if (needsRepair) right.appendChild(button("PYTORCH'U ONAR", "btn-solid", () => startInstall(true)));
+    right.appendChild(button(e.ready ? "YENİDEN KUR" : "ORTAMI KUR", e.ready || needsRepair ? "btn-ghost" : "btn-solid", () => startInstall(false)));
   }
   const problem = e.torch_error || e.probe_error || (e.exists && e.missing?.length ? `Eksik paket: ${e.missing.join(", ")}` : "");
   if (problem) box.appendChild(el("pre", "env-error", esc(problem)));
-  if (e.exists && e.torch && !e.cuda && e.nvidia) {
-    box.appendChild(el("p", "status is-bad", "NVIDIA kart var ama PyTorch onu göremiyor: CPU sürümü kurulmuş olabilir. YENİDEN KUR'u dene."));
+  if (needsRepair) {
+    box.appendChild(el("p", "status is-bad",
+      `NVIDIA kart var ama PyTorch onu göremiyor (${esc(e.torch)}${/\+cpu/.test(e.torch) ? ": CPU sürümü kurulmuş" : ""}). ` +
+      "PYTORCH'U ONAR yalnızca PyTorch'u GPU'lu sürümle değiştirir; diğer kütüphanelere dokunmaz."));
   }
   if (!e.nvidia && !e.cuda) {
     box.appendChild(el("p", "status is-bad", "NVIDIA ekran kartı görünmüyor: 8B bir model CPU'da günlerce sürebilir. Denemek için Llama 3.2 1B seç."));
@@ -184,9 +189,9 @@ function renderEnv() {
   if (job && job.kind === "install") box.appendChild(jobView(job));
 }
 
-async function startInstall() {
+async function startInstall(repair = false) {
   try {
-    job = await api("/api/train/env/install", { method: "POST" });
+    job = await api(repair ? "/api/train/env/repair" : "/api/train/env/install", { method: "POST" });
     renderEnv();
     renderRun();
     poll();
