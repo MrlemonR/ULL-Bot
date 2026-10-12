@@ -38,6 +38,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_title": True,
     # Boşsa ortam değişkeni (OLLAMA_URL / OLLAMA_HOST) ya da varsayılan adres.
     "ollama_url": "",
+    # Code modunun modeli (boşsa sohbet modeli kullanılır).
+    "code_model": "",
+    "code_num_ctx": 16384,
     "appearance": {},
 }
 
@@ -81,6 +84,21 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
+CREATE TABLE IF NOT EXISTS code_sessions (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    cwd        TEXT NOT NULL,
+    mode       TEXT NOT NULL DEFAULT 'ask',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS code_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES code_sessions(id) ON DELETE CASCADE,
+    data       TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_code_messages ON code_messages(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_chats_updated ON chats(updated_at);
 """
 
@@ -341,3 +359,40 @@ class DB:
                 if not row or row["role"] != "assistant":
                     return
                 self._conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+
+    # --- code oturumları ------------------------------------------------------------------------
+
+    def list_code_sessions(self) -> list[dict]:
+        return [dict(r) for r in self._q("SELECT * FROM code_sessions ORDER BY updated_at DESC")]
+
+    def get_code_session(self, sid: str) -> dict | None:
+        rows = self._q("SELECT * FROM code_sessions WHERE id = ?", (sid,))
+        return dict(rows[0]) if rows else None
+
+    def create_code_session(self, cwd: str, title: str) -> dict:
+        sid, now = _new_id(), time.time()
+        self._x("INSERT INTO code_sessions VALUES (?, ?, ?, 'ask', ?, ?)", (sid, title, cwd, now, now))
+        return self.get_code_session(sid)
+
+    def update_code_session(self, sid: str, fields: dict[str, Any]) -> dict | None:
+        allowed = {k: v for k, v in fields.items() if k in {"title", "mode"}}
+        if allowed:
+            cols = ", ".join(f"{k} = ?" for k in allowed)
+            self._x(f"UPDATE code_sessions SET {cols} WHERE id = ?", (*allowed.values(), sid))
+        return self.get_code_session(sid)
+
+    def delete_code_session(self, sid: str) -> bool:
+        return self._x("DELETE FROM code_sessions WHERE id = ?", (sid,)).rowcount > 0
+
+    def code_messages(self, sid: str) -> list[dict]:
+        rows = self._q("SELECT data FROM code_messages WHERE session_id = ? ORDER BY id", (sid,))
+        return [json.loads(r["data"]) for r in rows]
+
+    def add_code_message(self, sid: str, message: dict) -> None:
+        now = time.time()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO code_messages (session_id, data, created_at) VALUES (?, ?, ?)",
+                (sid, json.dumps(message, ensure_ascii=False), now),
+            )
+            self._conn.execute("UPDATE code_sessions SET updated_at = ? WHERE id = ?", (now, sid))

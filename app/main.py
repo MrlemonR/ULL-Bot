@@ -14,6 +14,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -29,7 +30,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import __version__, catalog, finetune, hardware
+from app import __version__, catalog, coder, finetune, hardware
 from app.db import DB
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -119,6 +120,8 @@ class SettingsPatch(BaseModel):
     model: str | None = Field(None, min_length=1, max_length=200)
     # Boş metin: ayarı sıfırla (ortam değişkeni / varsayılan adres kullanılır).
     ollama_url: str | None = Field(None, max_length=300)
+    code_model: str | None = Field(None, max_length=200)
+    code_num_ctx: int | None = Field(None, ge=2048, le=262144)
     temperature: float | None = Field(None, ge=0, le=2)
     num_ctx: int | None = Field(None, ge=512, le=262144)
     persona_reminder: bool | None = None
@@ -190,6 +193,24 @@ class TrainStartIn(BaseModel):
 class DatasetUploadIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=50_000_000)
+
+
+class CodeSessionIn(BaseModel):
+    cwd: str = Field(min_length=1, max_length=2000)
+
+
+class CodeSessionPatch(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=120)
+    mode: Literal["ask", "edits", "all"] | None = None
+
+
+class CodeSendIn(BaseModel):
+    content: str = Field(min_length=1, max_length=100_000)
+
+
+class PermissionIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    decision: Literal["allow", "deny", "always"]
 
 
 class PullIn(BaseModel):
@@ -424,6 +445,7 @@ def create_app(
             "personas": db.list_personas(),
             "projects": db.list_projects(),
             "chats": db.list_chats(),
+            "code_sessions": db.list_code_sessions(),
             "ollama_url": app.state.ollama_url,
             "ollama_url_default": resolve_ollama_url(""),
             "version": __version__,
@@ -937,6 +959,135 @@ def create_app(
         except OSError as e:
             raise HTTPException(500, f"Klasör açılamadı: {e}")
         return {"ok": True}
+
+    # --- code modu ------------------------------------------------------------------------------
+
+    broker = coder.PermissionBroker()
+    code_always: dict[str, set[str]] = {}
+    code_running: set[str] = set()
+
+    def need_code(sid: str) -> dict:
+        sess = db.get_code_session(sid)
+        if sess is None:
+            raise HTTPException(404, "Oturum bulunamadı")
+        return sess
+
+    def code_model() -> str:
+        s = settings()
+        return (s.get("code_model") or "").strip() or s["model"]
+
+    @app.get("/api/code/sessions")
+    def code_sessions():
+        return db.list_code_sessions()
+
+    @app.post("/api/code/sessions", status_code=201)
+    def code_create(body: CodeSessionIn):
+        path = Path(body.cwd.strip()).expanduser()
+        try:
+            path = path.resolve()
+        except OSError:
+            raise HTTPException(422, "Geçersiz klasör")
+        if not path.is_dir():
+            raise HTTPException(422, f"Klasör bulunamadı: {path}")
+        return db.create_code_session(str(path), "Yeni oturum")
+
+    @app.get("/api/code/sessions/{sid}")
+    def code_get(sid: str):
+        sess = need_code(sid)
+        return {**sess, "messages": db.code_messages(sid), "running": sid in code_running,
+                "exists": Path(sess["cwd"]).is_dir()}
+
+    @app.patch("/api/code/sessions/{sid}")
+    def code_patch(sid: str, body: CodeSessionPatch):
+        need_code(sid)
+        return db.update_code_session(sid, body.model_dump(exclude_none=True))
+
+    @app.delete("/api/code/sessions/{sid}")
+    def code_delete(sid: str):
+        if not db.delete_code_session(sid):
+            raise HTTPException(404, "Oturum bulunamadı")
+        code_always.pop(sid, None)
+        return {"ok": True}
+
+    @app.get("/api/code/browse")
+    def code_browse(path: str | None = None):
+        return coder.browse(path)
+
+    @app.post("/api/code/permission")
+    def code_permission(body: PermissionIn):
+        if not broker.answer(body.id, body.decision):
+            raise HTTPException(404, "Bekleyen izin isteği yok")
+        return {"ok": True}
+
+    @app.post("/api/code/sessions/{sid}/send")
+    async def code_send(sid: str, body: CodeSendIn):
+        sess = need_code(sid)
+        ws = coder.Workspace(sess["cwd"])
+        if not ws.root.is_dir():
+            raise HTTPException(422, f"Klasör bulunamadı: {sess['cwd']}")
+        if sid in code_running:
+            raise HTTPException(409, "Bu oturumda zaten bir iş çalışıyor")
+        s = settings()
+        model = code_model()
+        stored = db.code_messages(sid)
+        text = body.content.strip()
+        user = {"role": "user", "content": text}
+        db.add_code_message(sid, user)
+        stored.append(user)
+        if sess["title"] == "Yeni oturum":
+            db.update_code_session(sid, {"title": auto_title(text)})
+        options = {"temperature": 0.2, "num_ctx": max(int(s.get("code_num_ctx") or 16384), 2048)}
+
+        async def stream_chat(messages: list[dict]):
+            payload = {"model": model, "messages": messages, "tools": coder.TOOLS, "stream": True, "options": options}
+            async with app.state.ollama.stream("POST", "/api/chat", json=payload) as r:
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode("utf-8", "replace")
+                    msg = _ollama_error(r.status_code, raw, model)
+                    if "does not support tools" in raw:
+                        msg = (f"{model} araç çağırmayı (tools) desteklemiyor, bu yüzden Code modunda çalışamaz. "
+                               "Sağ üstten araç destekli bir kod modeli seç: qwen2.5-coder, qwen3, qwen3-coder, llama3.1, gpt-oss…")
+                    yield {"error": msg}
+                    return
+                async for line in r.aiter_lines():
+                    if line.strip():
+                        try:
+                            yield json.loads(line)
+                        except ValueError:
+                            continue
+
+        async def events():
+            code_running.add(sid)
+            try:
+                yield _line(type="start", session=db.get_code_session(sid), model=model)
+                async for ev in coder.run_agent(
+                    stream_chat=stream_chat, stored=stored, ws=ws,
+                    mode=lambda: (db.get_code_session(sid) or {}).get("mode", "ask"),
+                    broker=broker, save=lambda m: db.add_code_message(sid, m),
+                    always=code_always.setdefault(sid, set()),
+                ):
+                    yield _line(**ev)
+                yield _line(type="done", session=db.get_code_session(sid))
+            except httpx.HTTPError as e:
+                yield _line(type="error", message=describe_ollama_error(e, app.state.ollama_url))
+            finally:
+                code_running.discard(sid)
+
+        return StreamingResponse(events(), media_type="application/x-ndjson")
+
+    @app.get("/api/code/claude")
+    async def claude_info():
+        version = ""
+        try:
+            version = (await app.state.ollama.get("/api/version", timeout=3)).json().get("version", "")
+        except (httpx.HTTPError, ValueError, AttributeError):
+            pass
+        return {"found": bool(shutil.which("claude")), "ollama_version": version, "install": coder.INSTALL_HINT}
+
+    @app.post("/api/code/sessions/{sid}/claude")
+    def claude_launch(sid: str):
+        sess = need_code(sid)
+        return coder.launch_claude(sess["cwd"], code_model(), app.state.ollama_url)
 
     # Arayüz en sonda: "/" altındaki her şeyi yakalar, API rotaları önce eşleşir.
     app.mount("/", NoCacheStaticFiles(directory=WEB_DIR, html=True), name="web")

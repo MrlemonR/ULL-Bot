@@ -36,16 +36,21 @@ export async function refreshModels() {
 export const isInstalled = (name) =>
   S.installed.some((m) => m.name === name || m.name === `${name}:latest`);
 
+/** Ekrandaki moda göre geçerli model: Code modunda kod modeli (yoksa sohbet modeli). */
+export const currentModel = () =>
+  S.mode === "code" ? (S.settings.code_model || S.settings.model) : S.settings.model;
+
 function renderButton() {
-  $("#model-name").textContent = S.settings.model || "—";
-  const missing = S.online && !isInstalled(S.settings.model);
+  $("#model-name").textContent = currentModel() || "—";
+  const missing = S.online && !isInstalled(currentModel());
   btn.classList.toggle("is-warn", Boolean(missing));
   btn.title = missing ? `Model kurulu değil — Ayarlar → Modeller'den indir` : "Model değiştir";
 }
 
 export async function setModel(name) {
   try {
-    S.settings = await api("/api/settings", { method: "PUT", body: { model: name } });
+    const body = S.mode === "code" ? { code_model: name } : { model: name };
+    S.settings = await api("/api/settings", { method: "PUT", body });
     renderButton();
     emit("settings");
     toast(`Model: ${name}`);
@@ -60,14 +65,19 @@ function closeMenu() {
 }
 
 function openMenu() {
-  menu.innerHTML = '<div class="pop-title">MODEL SEÇ</div>';
+  const code = S.mode === "code";
+  menu.innerHTML = code
+    ? '<div class="pop-title">KOD MODELİ SEÇ · araç (tools) desteği gerekir</div>'
+    : '<div class="pop-title">MODEL SEÇ</div>';
   if (!S.online) {
     menu.appendChild(el("div", "pop-empty", esc(S.ollamaError || "Ollama'ya ulaşılamadı.")));
   } else if (!S.installed.length) {
     menu.appendChild(el("div", "pop-empty", "Kurulu model yok. Aşağıdan öneri al ve indir."));
   }
-  S.installed.forEach((m) => {
-    const active = m.name === S.settings.model;
+  // Code modunda kod modelleri üstte.
+  const list = code ? [...S.installed].sort((a, b) => b.tags.includes("kod") - a.tags.includes("kod")) : S.installed;
+  list.forEach((m) => {
+    const active = m.name === currentModel();
     const item = el("button", "pop-item" + (active ? " is-active" : ""));
     item.type = "button";
     const tags = m.tags.map((t) => CAT_SHORT[t] || t).join(" · ");
@@ -101,3 +111,4 @@ document.addEventListener("keydown", (e) => {
 });
 
 on("settings", renderButton);
+on("mode", renderButton);

@@ -6,7 +6,7 @@ import { S, emit } from "./store.js";
 import { toast } from "./ui.js";
 import { $, el, esc, fmtBytes } from "./util.js";
 
-const page = $("#train-page");
+let page = null;           // Ayarlar → İnce ayar sayfasının gövdesi
 let active = false;
 let pollTimer = 0;
 
@@ -54,9 +54,9 @@ function autoName() {
 
 // --- sayfa ------------------------------------------------------------------------------
 
-export async function showTrain() {
+export async function showTrain(container) {
   active = true;
-  page.innerHTML = "";
+  page = container;
   panel("tr-env", "EĞİTİM ORTAMI",
     "Eğitim ayrı bir Python ortamında (<code>.train-venv</code>) yapılır: PyTorch + Unsloth/PEFT. " +
     "İlk kurulum birkaç GB indirir. <b>NVIDIA ekran kartı şiddetle önerilir</b>; olmadan yalnızca 1B gibi küçük modeller, çok yavaş eğitilebilir.");
@@ -163,7 +163,7 @@ function renderEnv() {
     `<div class="hw-cell"><div class="k">Ekran kartı</div><div class="v">${gpu}</div></div>` +
     `<div class="hw-cell"><div class="k">PyTorch</div><div class="v">${yes(e.torch)}</div>${e.torch ? `<div class="s">CUDA: ${e.cuda ? "✓ kullanılıyor" : "✗ yok"}</div>` : ""}</div>` +
     `<div class="hw-cell"><div class="k">Hızlandırma</div><div class="v">${e.unsloth ? '<span class="ok">✓</span> Unsloth' : e.peft ? "PEFT" : "—"}</div>` +
-    `<div class="s">${e.unsloth ? "2× hızlı, yarı bellek" : e.peft ? "standart LoRA" : ""}</div></div>` +
+    `<div class="s">${e.unsloth ? `${esc(e.unsloth)} · çalışmazsa PEFT'e geçer` : e.peft ? "standart LoRA" : ""}</div></div>` +
     `<div class="hw-cell"><div class="k">Durum</div><div class="v">${e.ready ? '<span class="ok">✓ hazır</span>' : '<span class="no">kurulu değil</span>'}</div>` +
     `<div class="s">${esc(e.python ? "Python " + e.python : e.exists ? "" : ".train-venv yok")}</div></div>` +
     `</div>`;
@@ -172,6 +172,11 @@ function renderEnv() {
   right.appendChild(button("↻ KONTROL ET", "btn-ghost", () => loadEnv(true)));
   if (!installing) {
     right.appendChild(button(e.ready ? "YENİDEN KUR" : "ORTAMI KUR", e.ready ? "btn-ghost" : "btn-solid", startInstall));
+  }
+  const problem = e.torch_error || e.probe_error || (e.exists && e.missing?.length ? `Eksik paket: ${e.missing.join(", ")}` : "");
+  if (problem) box.appendChild(el("pre", "env-error", esc(problem)));
+  if (e.exists && e.torch && !e.cuda && e.nvidia) {
+    box.appendChild(el("p", "status is-bad", "NVIDIA kart var ama PyTorch onu göremiyor: CPU sürümü kurulmuş olabilir. YENİDEN KUR'u dene."));
   }
   if (!e.nvidia && !e.cuda) {
     box.appendChild(el("p", "status is-bad", "NVIDIA ekran kartı görünmüyor: 8B bir model CPU'da günlerce sürebilir. Denemek için Llama 3.2 1B seç."));

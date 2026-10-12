@@ -4,6 +4,7 @@ import { DEFAULT_APPEARANCE, applyAppearance } from "./appearance.js";
 import { isInstalled, refreshModels, setModel } from "./models.js";
 import { createSpinner } from "./spinner.js";
 import { S, emit, on } from "./store.js";
+import { leaveTrain, showTrain } from "./train.js";
 import { confirmDialog, openModal, promptDialog, toast } from "./ui.js";
 import { $, $$, debounce, el, esc, fmtBytes } from "./util.js";
 
@@ -11,14 +12,17 @@ const body = $("#settings-body");
 let page = null;
 
 export function showSettings(name) {
-  page = ["appearance", "models", "personas"].includes(name) ? name : "appearance";
+  if (page === "train" && name !== "train") leaveTrain();
+  page = ["appearance", "models", "personas", "train"].includes(name) ? name : "appearance";
   $$(".settings-nav a").forEach((a) => a.classList.toggle("is-active", a.dataset.page === page));
   body.innerHTML = "";
   body.scrollTop = 0;
+  if (page === "train") return showTrain(body);
   ({ appearance: renderAppearance, models: renderModels, personas: renderPersonas })[page]();
 }
 
 export function leaveSettings() {
+  if (page === "train") leaveTrain();
   page = null;
 }
 

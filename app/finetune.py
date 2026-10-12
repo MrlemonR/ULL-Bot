@@ -201,33 +201,34 @@ def venv_python(venv: Path) -> Path:
     return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
+# Ortam kontrolü İKİ adımda: önce kurulu paket sürümleri (içe aktarmadan, anında),
+# sonra yalnızca torch (GPU bilgisi için). Eskiden transformers/peft/unsloth da
+# içe aktarılıyordu; NVIDIA'lı makinede unsloth'un ilk yüklenişi (çekirdek
+# derleme, eklentiler) dakikalar sürüp süre sınırını aşıyor, kontrol kurulu
+# kütüphaneleri "yüklenemedi" diye raporluyordu.
 PROBE = r"""
-import json, sys, importlib
+import json, sys
+from importlib import metadata
 out = {"python": sys.version.split()[0]}
-for mod in ("torch", "transformers", "peft", "accelerate", "bitsandbytes", "huggingface_hub"):
+for pkg in ("torch", "transformers", "peft", "accelerate", "bitsandbytes", "unsloth", "huggingface_hub"):
     try:
-        out[mod] = getattr(importlib.import_module(mod), "__version__", "?")
-    except Exception:
-        out[mod] = None
-out["cuda"] = False
+        out[pkg] = metadata.version(pkg)
+    except metadata.PackageNotFoundError:
+        out[pkg] = None
+print("@@ULL " + json.dumps(out), flush=True)
+gpu = {"cuda": False}
 try:
     import torch
-    out["cuda"] = bool(torch.cuda.is_available())
-    if out["cuda"]:
+    gpu["torch_ok"] = True
+    gpu["cuda"] = bool(torch.cuda.is_available())
+    if gpu["cuda"]:
         p = torch.cuda.get_device_properties(0)
-        out["gpu"] = p.name
-        out["vram_gb"] = round(p.total_memory / 1024**3, 1)
-        out["bf16"] = bool(torch.cuda.is_bf16_supported())
+        gpu["gpu"] = p.name
+        gpu["vram_gb"] = round(p.total_memory / 1024**3, 1)
+        gpu["bf16"] = bool(torch.cuda.is_bf16_supported())
 except Exception as e:
-    out["torch_error"] = str(e)[:200]
-out["unsloth"] = None
-if out["cuda"]:
-    try:
-        import unsloth
-        out["unsloth"] = getattr(unsloth, "__version__", "?")
-    except Exception as e:
-        out["unsloth_error"] = str(e)[:200]
-print("@@ULL " + json.dumps(out))
+    gpu["torch_error"] = (type(e).__name__ + ": " + str(e))[:400]
+print("@@ULL " + json.dumps(gpu), flush=True)
 """
 
 
@@ -235,22 +236,40 @@ def _no_window() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _probe_lines(text: str) -> dict:
+    out: dict[str, Any] = {}
+    for ln in (text or "").splitlines():
+        if ln.startswith(EVENT_PREFIX):
+            try:
+                out.update(json.loads(ln[len(EVENT_PREFIX):]))
+            except ValueError:
+                pass
+    return out
+
+
 def check_env(venv: Path) -> dict:
     py = venv_python(venv)
     result: dict[str, Any] = {"venv": str(venv), "exists": py.exists(), "nvidia": nvidia_info()}
     if not py.exists():
         result["ready"] = False
+        result["missing"] = ["torch", "transformers", "peft"]
         return result
     try:
         out = subprocess.run(
             [str(py), "-c", PROBE], capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=180, creationflags=_no_window(),
+            timeout=300, creationflags=_no_window(),
         )
-        line = next((ln for ln in out.stdout.splitlines() if ln.startswith(EVENT_PREFIX)), None)
-        result.update(json.loads(line[len(EVENT_PREFIX):]) if line else {"probe_error": (out.stderr or out.stdout)[-500:]})
-    except (OSError, subprocess.SubprocessError, ValueError) as e:
+        result.update(_probe_lines(out.stdout))
+        if out.returncode != 0 and not result.get("torch_ok"):
+            result["probe_error"] = (out.stderr or out.stdout).strip()[-600:]
+    except subprocess.TimeoutExpired as e:
+        partial = e.stdout.decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+        result.update(_probe_lines(partial))
+        result["probe_error"] = "PyTorch 5 dakikada yüklenemedi (zaman aşımı)."
+    except OSError as e:
         result["probe_error"] = str(e)
-    result["ready"] = bool(result.get("torch") and result.get("transformers") and result.get("peft"))
+    result["missing"] = [k for k in ("torch", "transformers", "peft") if not result.get(k)]
+    result["ready"] = not result["missing"] and bool(result.get("torch_ok"))
     return result
 
 
@@ -397,8 +416,11 @@ class Trainer:
             job.progress = 1
             self._env_cache = None
             env = self.env(refresh=True)
-            msg = "Ortam hazır" + (f" · GPU: {env.get('gpu')}" if env.get("cuda") else " · GPU kullanılamıyor (CPU)")
-            self._finish(job, "done" if env.get("ready") else "error", msg if env.get("ready") else "Kurulum bitti ama kütüphaneler yüklenemedi")
+            if env.get("ready"):
+                msg = "Ortam hazır" + (f" · GPU: {env.get('gpu')}" if env.get("cuda") else " · GPU kullanılamıyor (CPU)")
+                return self._finish(job, "done", msg)
+            reason = env.get("torch_error") or env.get("probe_error") or ("eksik paket: " + ", ".join(env.get("missing") or []))
+            self._finish(job, "error", f"Kurulum bitti ama ortam hazır değil — {reason}")
         except Exception as e:  # beklenmeyen her şey arayüzde görünsün
             self._finish(job, "error", f"Hata: {e}")
 

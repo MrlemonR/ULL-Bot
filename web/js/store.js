@@ -11,6 +11,8 @@ export const S = {
   ollamaUrl: "",
   ollamaUrlDefault: "",
   version: "",
+  mode: "chat",       // "chat" | "code"
+  codeSessions: [],   // {id, title, cwd, mode, updated_at}
 };
 
 const listeners = new Map();
@@ -43,4 +45,14 @@ export function upsertProject(project) {
   else S.projects[i] = project;
   S.projects.sort((a, b) => (b.pinned - a.pinned) || (a.created_at - b.created_at));
   emit("projects");
+}
+
+export const codeSessionById = (id) => S.codeSessions.find((x) => x.id === id) || null;
+
+export function upsertCodeSession(sess) {
+  const i = S.codeSessions.findIndex((x) => x.id === sess.id);
+  if (i === -1) S.codeSessions.unshift(sess);
+  else S.codeSessions[i] = { ...S.codeSessions[i], ...sess };
+  S.codeSessions.sort((a, b) => b.updated_at - a.updated_at);
+  emit("code-sessions");
 }

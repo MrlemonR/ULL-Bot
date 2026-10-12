@@ -1,9 +1,10 @@
 /* Sol kenar çubuğu: sabitlenenler, projeler (klasörler), diğer sohbetler, arama. */
 import { api } from "./api.js";
 import { chatMenuItems, createProject, projectMenuItems } from "./actions.js";
+import { codeMenuItems, newCodeSession } from "./code.js";
 import { S, on, projectById } from "./store.js";
 import { openContextMenu } from "./ui.js";
-import { $, debounce, el, esc } from "./util.js";
+import { $, $$, debounce, el, esc } from "./util.js";
 
 const list = $("#side-list");
 const search = $("#side-search");
@@ -82,7 +83,46 @@ function section(label, { tools = [], collapseKey = null, href = null } = {}) {
   return items;
 }
 
+function folderName(cwd) {
+  const parts = cwd.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || cwd;
+}
+
+/* Code modu: oturumlar klasöre göre gruplanır. */
+function renderCode() {
+  list.innerHTML = "";
+  if (!S.codeSessions.length) {
+    const items = section("Kod oturumları");
+    items.appendChild(el("div", "side-empty", "Henüz oturum yok — bir klasör seçip başla."));
+    return;
+  }
+  const groups = new Map();
+  S.codeSessions.forEach((x) => {
+    if (!groups.has(x.cwd)) groups.set(x.cwd, []);
+    groups.get(x.cwd).push(x);
+  });
+  groups.forEach((sessions, cwd) => {
+    const items = section(folderName(cwd), {
+      collapseKey: "code:" + cwd,
+      tools: [["+", "Bu klasörde yeni oturum", () => newCodeSession(cwd)]],
+    });
+    items.parentElement.querySelector(".label").title = cwd;
+    sessions.forEach((x) => {
+      const active = route.view === "code" && route.sessionId === x.id;
+      const item = el("div", "side-item" + (active ? " is-active" : ""));
+      item.innerHTML =
+        `<span class="ic">›</span><a class="t" href="#/code/${x.id}" title="${esc(x.title)}">${esc(x.title)}</a>` +
+        `<button class="mini-btn more" type="button" aria-label="Seçenekler" aria-expanded="false">⋯</button>`;
+      item.querySelector(".more").addEventListener("click", (e) => openContextMenu(e.currentTarget, codeMenuItems(x)));
+      items.appendChild(item);
+    });
+  });
+}
+
 function render() {
+  const code = S.mode === "code";
+  $$(".sidebar [data-for]").forEach((n) => { n.hidden = n.dataset.for !== (code ? "code" : "chat"); });
+  if (code) return renderCode();
   list.innerHTML = "";
 
   if (searchResults) {
@@ -156,9 +196,10 @@ on("projects", render);
 on("route", (r) => {
   route = r;
   $("#act-settings").classList.toggle("is-active", r.view === "settings");
-  $("#act-train").classList.toggle("is-active", r.view === "train");
   render();
 });
+on("mode", render);
+on("code-sessions", () => { if (S.mode === "code") render(); });
 
 export function focusSearch() {
   search.focus();

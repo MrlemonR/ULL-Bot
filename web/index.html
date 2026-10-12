@@ -27,23 +27,32 @@
     <aside class="sidebar" id="sidebar" aria-label="Sohbetler">
       <div class="side-head">
         <a class="brand" href="#/" title="Yeni sohbet">ULL<b>::</b>BOT</a>
+        <!-- Sohbet / Code geçişi -->
+        <div class="mode-switch" role="tablist" aria-label="Mod">
+          <button type="button" role="tab" data-mode="chat" title="Sohbet"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg></button>
+          <button type="button" role="tab" data-mode="code" title="Code"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg></button>
+        </div>
         <button class="icon-btn side-close" id="side-close" type="button" title="Kenar çubuğunu gizle">◧</button>
       </div>
 
-      <nav class="side-actions">
+      <nav class="side-actions" data-for="chat">
         <a class="side-act" href="#/"><span class="ic">+</span>Yeni sohbet</a>
         <button class="side-act" id="act-new-project" type="button"><span class="ic">▣</span>Yeni proje</button>
-        <a class="side-act" href="#/train" id="act-train"><span class="ic">◈</span>İnce ayar</a>
-        <a class="side-act" href="#/settings/appearance" id="act-settings"><span class="ic">⚙</span>Ayarlar</a>
+      </nav>
+      <nav class="side-actions" data-for="code" hidden>
+        <button class="side-act" id="act-new-code" type="button"><span class="ic">+</span>Yeni kod oturumu</button>
       </nav>
 
-      <label class="side-search">
+      <label class="side-search" data-for="chat">
         <span class="ic" aria-hidden="true">⌕</span>
         <input id="side-search" type="search" placeholder="Sohbetlerde ara" spellcheck="false" />
       </label>
 
       <div class="side-list" id="side-list"></div>
-      <div class="side-foot" id="side-foot"></div>
+      <div class="side-foot">
+        <a class="side-act" href="#/settings/appearance" id="act-settings"><span class="ic">⚙</span>Ayarlar</a>
+        <span class="ver" id="side-foot"></span>
+      </div>
     </aside>
     <div class="side-scrim" id="side-scrim"></div>
 
@@ -103,8 +112,29 @@
       </section>
 
       <!-- İNCE AYAR -->
-      <section class="view" data-view="train">
-        <div class="page" id="train-page"></div>
+      <!-- CODE -->
+      <section class="view" data-view="code">
+        <div class="code-bar" id="code-bar"></div>
+        <div class="log-wrap">
+          <div class="chat-log code-log" id="code-log" aria-live="polite"></div>
+          <button class="jump" id="code-jump" type="button" hidden>▼ EN ALTA</button>
+        </div>
+        <form class="composer" id="code-form" autocomplete="off">
+          <div class="composer-box">
+            <div class="persona-pick">
+              <button type="button" class="persona-btn" id="perm-btn" aria-haspopup="listbox" aria-expanded="false" title="İzin modu">
+                <span class="glyph">◆</span><span id="perm-name">SOR</span><span class="caret">▾</span>
+              </button>
+              <div class="pop persona-menu" id="perm-menu" role="listbox" hidden></div>
+            </div>
+            <span class="composer-project" id="code-folder"></span>
+            <textarea id="code-input" rows="1" placeholder="Ne yapayım? Örn: README'ye kurulum bölümü ekle · testleri çalıştır ve hataları düzelt"></textarea>
+            <div class="composer-foot">
+              <span class="hint" id="code-hint">ENTER ▸ gönder · SHIFT+ENTER ▸ yeni satır</span>
+              <button class="send" id="code-send" type="submit">GÖNDER ▶</button>
+            </div>
+          </div>
+        </form>
       </section>
 
       <!-- AYARLAR -->
@@ -114,6 +144,7 @@
             <a href="#/settings/appearance" data-page="appearance">▚ GÖRÜNÜM</a>
             <a href="#/settings/models" data-page="models">▤ MODELLER</a>
             <a href="#/settings/personas" data-page="personas">◆ KİŞİLİKLER</a>
+            <a href="#/settings/train" data-page="train">◈ İNCE AYAR</a>
           </nav>
           <div class="settings-body" id="settings-body"></div>
         </div>

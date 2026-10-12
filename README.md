@@ -24,7 +24,11 @@ karakterlerle Matrix yağmuru akar.
 - **Model ara & indir** — model adını yazmaya başla (`llam`, `qwen`, `kod`…):
   eşleşen modeller bu bilgisayarda nasıl çalışacakları ve ne işe yaradıklarıyla
   listelenir.
-- **İnce ayar (fine-tune)** — kenar çubuğunda *◈ İnce ayar*: bir model seç
+- **Code modu** — logonun yanındaki `</>` düğmesi: bir klasör seç, ne
+  yapılacağını yaz; ULL-Bot dosyaları okur, düzenler (önce farkı gösterip izin
+  ister), komut çalıştırır. İstersen gerçek **Claude Code**'u aynı klasörde
+  yerel modelle açar. Ayrıntılar aşağıda.
+- **İnce ayar (fine-tune)** — *Ayarlar → İnce ayar*: bir model seç
   (Llama 3.1 8B, Llama 3.2 1B/3B, Mistral 7B), soru-cevap JSON dosyasını ver,
   eğitimi başlat. Bitince Ollama'ya yeni bir model olarak eklenir ve seçilir.
   Ayrıntılar aşağıda.
@@ -48,6 +52,30 @@ karakterlerle Matrix yağmuru akar.
 
    Tarayıcı kendiliğinden `http://127.0.0.1:8765` adresini açar.
 
+## Code modu
+
+Kenar çubuğunun üstündeki geçişle **Sohbet** ↔ **Code** arasında gidilir.
+
+1. **Klasör seç** — *+ Yeni kod oturumu* ya da *KLASÖR SEÇ*. Oturumlar kenar
+   çubuğunda klasöre göre gruplanır.
+2. **Model** — sağ üstten bir kod modeli seç (Code modunun modeli sohbetten
+   ayrı tutulur). Model **araç çağırmayı (tools)** desteklemeli:
+   `qwen2.5-coder`, `qwen3`, `qwen3-coder`, `llama3.1`, `gpt-oss`…
+3. **Yaz** — ajan şu araçlarla çalışır: dosya listele, oku, ara, düzenle, yaz,
+   komut çalıştır. Hepsi seçilen klasöre kilitli; dışına çıkamaz.
+4. **İzin modu** (yazma kutusunun sol üstü):
+   - **SOR** — her düzenleme ve komuttan önce farkı gösterip sorar (1 evet,
+     2 hep izin ver, 3 hayır),
+   - **DÜZENLEMELER SERBEST** — dosya düzenlemeleri sorulmaz, komutlar sorulur,
+   - **TAM YETKİ** — hiçbir şey sorulmaz.
+
+**Claude Code ile aç** — gerçek Claude Code'u o klasörde, seçili yerel modelle
+bir terminalde başlatır (Ollama 0.14+ Anthropic API uyumluluğu:
+`ANTHROPIC_BASE_URL=<ollama adresi> claude --model <model>`). `claude`
+komutu kurulu olmalı; değilse kurulum komutu ve elle çalıştırma komutu
+gösterilir. Claude Code büyük bir bağlam ister: Ollama'nın bağlam uzunluğunu
+32K–64K yap ve güçlü bir kod modeli seç.
+
 ## İnce ayar (fine-tune)
 
 Ollama'nın model dosyaları (GGUF) doğrudan eğitilemiyor. ULL-Bot bu yüzden
@@ -59,7 +87,7 @@ FROM llama3.1:8b
 ADAPTER ./adapter
 ```
 
-1. **Eğitim ortamı** — *İnce ayar → ORTAMI KUR*. Ayrı bir Python ortamı
+1. **Eğitim ortamı** — *Ayarlar → İnce ayar → ORTAMI KUR*. Ayrı bir Python ortamı
    (`.train-venv`) kurulur: PyTorch (CUDA sürümü sürücüne göre seçilir),
    Unsloth ve PEFT. Birkaç GB indirir; bir kez yapılır.
 2. **Veri seti** — `datasets/` klasörüne at ya da *DOSYA YÜKLE*. Biçim:
@@ -88,7 +116,7 @@ Qwen/Gemma şimdilik listede yok.
 - **Güncelledim ama eski hali açılıyor** — eski ULL-Bot penceresi hâlâ açık
   olabilir: kapat (Ctrl+C) ve `uv run ull-bot` ile yeniden başlat. Port
   doluysa ULL-Bot bunu söyleyip çıkar. Tarayıcıda bir kez Ctrl+F5 yap.
-  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.5.0`).
+  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.6.0`).
 - **Ollama'ya bağlanamıyor** — başlarken terminalde `Ollama (...): ...`
   satırı sebebi yazar. Ollama açık olmalı (Windows'ta Ollama uygulaması ya da
   `ollama serve`). Farklı adres/port için: *Ayarlar → Modeller → Ollama
@@ -123,6 +151,7 @@ app/hardware.py  donanım taraması (CPU, RAM, GPU/VRAM — Windows/Linux/macOS)
 app/catalog.py   önerilen modeller ve donanıma göre uygunluk
 app/finetune.py  ince ayar: veri seti, eğitim ortamı, iş yönetimi, Ollama'ya ekleme
 app/train_worker.py  eğitim betiği (.train-venv'de çalışır: Unsloth / PEFT LoRA)
+app/coder.py     Code modu: araçlar, ajan döngüsü, izinler, Claude Code başlatıcı
 web/             arayüz (index.html, style.css, js/*.js modülleri)
 tests/           API testleri (Ollama taklit edilir)
 ```
