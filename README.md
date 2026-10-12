@@ -11,6 +11,8 @@ karakterlerle Matrix yağmuru akar.
 - **Kişilikler (master prompt)** — Ayarlar → Kişilikler'de `+` ile istediğin
   kadar ekle; sohbet kutusunun sol üstündeki `◆ İSİM ▾` ile seç. Kişilik her
   mesajda modele verilir ve kısa bir hatırlatmayla konuşma boyunca korunur.
+  Aynı menüdeki **Kişiliksiz** ile hiç sistem promptu gönderilmez; model kendi
+  hâliyle konuşur.
 - **Model seçici** — sağ üstteki model adına tıkla.
 - **Model önerisi** — Ayarlar → Modeller → *Bilgisayarı tara*: RAM'e, ekran
   kartına ve VRAM'e bakıp hangi modelin rahat çalışacağını ve ne işe
@@ -24,6 +26,13 @@ karakterlerle Matrix yağmuru akar.
 - **Model ara & indir** — model adını yazmaya başla (`llam`, `qwen`, `kod`…):
   eşleşen modeller bu bilgisayarda nasıl çalışacakları ve ne işe yaradıklarıyla
   listelenir.
+- **Hugging Face'ten ekle** — *Ayarlar → Modeller*: bir Hugging Face model
+  bağlantısını yapıştır (ör. `https://huggingface.co/kullanıcı/model-GGUF`).
+  Depodaki GGUF sürümleri (Q4_K_M, Q8_0…) boyutları ve bu bilgisayarda nasıl
+  çalışacaklarıyla listelenir, en uygunu ★ ile önerilir. Kısa bir ad ver,
+  **İNDİR VE EKLE**: Ollama `hf.co/kullanıcı/model:Q4_K_M` olarak indirir,
+  ULL-Bot kısa adla kaydeder. Depoda GGUF yoksa aynı modelin GGUF sürümleri
+  önerilir.
 - **Code modu** — logonun yanındaki `</>` düğmesi: bir klasör seç, ne
   yapılacağını yaz; ULL-Bot dosyaları okur, düzenler (önce farkı gösterip izin
   ister), komut çalıştırır. İstersen gerçek **Claude Code**'u aynı klasörde
@@ -116,10 +125,14 @@ Qwen/Gemma şimdilik listede yok.
 - **Güncelledim ama eski hali açılıyor** — eski ULL-Bot penceresi hâlâ açık
   olabilir: kapat (Ctrl+C) ve `uv run ull-bot` ile yeniden başlat. Port
   doluysa ULL-Bot bunu söyleyip çıkar. Tarayıcıda bir kez Ctrl+F5 yap.
-  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.6.1`).
+  Kenar çubuğunun altında sürüm yazar (ör. `ULL-Bot v0.7.0`).
 - **İnce ayar: PyTorch ekran kartını görmüyor** (`+cpu` yazıyor, CUDA ✗) —
   *Ayarlar → İnce ayar → PYTORCH'U ONAR*: yalnızca PyTorch'u sürücüne uygun
   CUDA sürümüyle değiştirir. Olmazsa NVIDIA sürücüsünü güncelle.
+- **Hugging Face modeli inmiyor** — Ollama yalnızca **GGUF** dosyalarını
+  çekebilir; bağlantı `...-GGUF` gibi bir depoya gitmeli. Erişim izni isteyen
+  (gated) depolarda Hugging Face'te koşulları kabul et ve Ollama'nın açık
+  anahtarını (`~/.ollama/id_ed25519.pub`) HF hesabına ekle.
 - **Ollama'ya bağlanamıyor** — başlarken terminalde `Ollama (...): ...`
   satırı sebebi yazar. Ollama açık olmalı (Windows'ta Ollama uygulaması ya da
   `ollama serve`). Farklı adres/port için: *Ayarlar → Modeller → Ollama
@@ -152,6 +165,7 @@ app/main.py      FastAPI sunucusu: API, sohbet akışı, prompt kurulumu
 app/db.py        SQLite deposu (ayarlar, kişilikler, projeler, sohbetler)
 app/hardware.py  donanım taraması (CPU, RAM, GPU/VRAM — Windows/Linux/macOS)
 app/catalog.py   önerilen modeller ve donanıma göre uygunluk
+app/hf.py        Hugging Face bağlantısı → GGUF sürümleri, öneri
 app/finetune.py  ince ayar: veri seti, eğitim ortamı, iş yönetimi, Ollama'ya ekleme
 app/train_worker.py  eğitim betiği (.train-venv'de çalışır: Unsloth / PEFT LoRA)
 app/coder.py     Code modu: araçlar, ajan döngüsü, izinler, Claude Code başlatıcı

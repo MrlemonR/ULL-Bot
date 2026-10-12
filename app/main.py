@@ -30,7 +30,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import __version__, catalog, coder, finetune, hardware
+from app import __version__, catalog, coder, finetune, hardware, hf
 from app.db import DB
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -213,6 +213,12 @@ class PermissionIn(BaseModel):
     decision: Literal["allow", "deny", "always"]
 
 
+class ModelCopyIn(BaseModel):
+    source: str = Field(min_length=1, max_length=300)
+    destination: str = Field(min_length=1, max_length=120)
+    delete_source: bool = False
+
+
 class PullIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
@@ -365,6 +371,7 @@ def create_app(
     train_python: str | Path | None = None,
     ollama_cmd: list[str] | None = None,
     dataset_dir: str | Path | None = None,
+    hf_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     data_dir = Path(data_dir or os.environ.get("ULL_DATA_DIR", "data"))
     # Ayar dosyaları uygulamanın klasöründe: <proje>/prefab
@@ -397,10 +404,12 @@ def create_app(
     async def lifespan(app: FastAPI):
         app.state.ollama_url = effective_url()
         app.state.ollama = make_client(app.state.ollama_url)
+        # Hugging Face internette: sistem proxy'si gerekebilir, o yüzden trust_env açık.
+        app.state.hf = httpx.AsyncClient(base_url=hf.HF_HOST, timeout=20, transport=hf_transport, follow_redirects=True)
         try:
             yield
         finally:
-            for client in [app.state.ollama, *retired]:
+            for client in [app.state.ollama, app.state.hf, *retired]:
                 await client.aclose()
             db.close()
 
@@ -862,6 +871,35 @@ def create_app(
                 yield _line(type="error", message=describe_ollama_error(e, app.state.ollama_url))
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
+
+    @app.get("/api/hf/inspect")
+    async def hf_inspect(ref: str):
+        hw = await run_in_threadpool(hardware.scan)
+        try:
+            return await hf.inspect(app.state.hf, ref, hw)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ConnectionError as e:
+            raise HTTPException(502, str(e))
+
+    @app.post("/api/models/copy")
+    async def copy_model(body: ModelCopyIn):
+        """Ollama'da kısa ad ver (hf.co/... adları çok uzun). Dosyalar kopyalanmaz, aynı veriyi gösterir."""
+        try:
+            dest = finetune.ollama_model_name(body.destination)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        try:
+            r = await app.state.ollama.post("/api/copy", json={"source": body.source, "destination": dest})
+            if r.status_code != 200:
+                raise HTTPException(r.status_code, _ollama_error(r.status_code, r.text, body.source))
+            if body.delete_source and body.source != dest:
+                await app.state.ollama.request("DELETE", "/api/delete", json={"model": body.source})
+        except httpx.HTTPError as e:
+            raise HTTPException(502, describe_ollama_error(e, app.state.ollama_url))
+        return {"ok": True, "name": dest}
 
     @app.delete("/api/models/{name:path}")
     async def delete_model(name: str):

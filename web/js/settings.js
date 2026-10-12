@@ -301,6 +301,7 @@ const pulls = new Map(); // indirilen modeller: ad → {controller, status, comp
 function renderModels() {
   renderConnection();
   renderModelSearch();
+  renderHuggingFace();
   const installedPanel = panel("KURULU MODELLER", "Sohbette kullanılacak modeli seç. Sağ üstteki model adından da değiştirebilirsin.",
     button("↻ YENİLE", "btn-ghost", async () => { await refreshModels(); }));
   installedPanel.appendChild(el("div", "", "")).id = "installed-list";
@@ -373,7 +374,10 @@ function renderModelSearch() {
 
   const pullBtn = button("İNDİR", "btn", () => {
     const n = nameIn.value.trim();
-    if (n) { close(); pull(n); }
+    if (!n) return;
+    close();
+    if (isHfRef(n)) return openHf(n);
+    pull(n);
   });
   const manual = panel("MODEL ARA & İNDİR",
     "Adını yazmaya başla: eşleşen modeller, bu bilgisayarda nasıl çalışacakları ve ne işe yaradıklarıyla listelenir. " +
@@ -679,11 +683,11 @@ function paintPull(name, final) {
     n.innerHTML = `<span class="bar">${bar}</span> ${String(Math.round(ratio * 100)).padStart(3)}%${size} · ${esc(st.status || "")}`;
   });
   $$("[data-pull-btn]", body).filter((b) => b.dataset.pullBtn === name).forEach((b) => {
-    b.textContent = pulls.has(name) ? "İPTAL" : "İNDİR";
+    b.textContent = pulls.has(name) ? "İPTAL" : b.dataset.idle || "İNDİR";
   });
 }
 
-async function pull(name) {
+async function pull(name, onDone) {
   if (pulls.has(name)) {
     pulls.get(name).controller.abort();
     return;
@@ -709,6 +713,7 @@ async function pull(name) {
   pulls.delete(name);
   if (st.done && !st.error) {
     toast(`${name} indirildi ✓`);
+    if (onDone) await onDone();
     await refreshModels();
     paintPull(name);
   } else {
@@ -872,3 +877,147 @@ on("settings", () => {
   if (page === "models") { renderInstalled(); renderScan(); modelSearchRefresh?.(); }
   if (page === "personas") markActiveCards();
 });
+
+// --- Hugging Face'ten ekle ----------------------------------------------------------------
+
+const isHfRef = (v) => /^(https?:\/\/)?(www\.)?(huggingface\.co|hf\.co)\//i.test(v.trim());
+let hfState = null; // son incelenen depo
+let hfRefIn = null;
+
+function openHf(ref) {
+  if (!hfRefIn) return;
+  hfRefIn.value = ref;
+  hfRefIn.closest(".panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  inspectHf();
+}
+
+function renderHuggingFace() {
+  const p = panel("HUGGING FACE'TEN EKLE",
+    "Hugging Face'te bulduğun bir <b>GGUF</b> modelin bağlantısını yapıştır. Depodaki sürümleri (Q4_K_M, Q8_0…) boyutları ve " +
+    "bu bilgisayarda nasıl çalışacaklarıyla gösterir; seçtiğini Ollama indirir ve kısa bir adla eklenir.");
+  hfRefIn = el("input");
+  hfRefIn.placeholder = "https://huggingface.co/kullanıcı/model-GGUF";
+  hfRefIn.spellcheck = false;
+  const find = button("BUL", "btn", inspectHf);
+  hfRefIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); inspectHf(); } });
+  hfRefIn.addEventListener("paste", () => setTimeout(() => { if (isHfRef(hfRefIn.value)) inspectHf(); }, 0));
+  const r = el("div", "row");
+  r.append(hfRefIn, find);
+  const out = el("div", "hf-out");
+  out.id = "hf-out";
+  p.append(r, out);
+  if (hfState) { hfRefIn.value = hfState.ref; paintHf(); }
+}
+
+async function inspectHf() {
+  const ref = hfRefIn.value.trim();
+  const out = $("#hf-out");
+  if (!ref || !out) return;
+  const sp = createSpinner({ label: "Looking at the repo…" });
+  out.innerHTML = "";
+  out.appendChild(sp.node);
+  try {
+    const info = await api(`/api/hf/inspect?ref=${encodeURIComponent(ref)}`);
+    hfState = { ref, info, quant: info.selected, name: info.suggested_name ? `${info.suggested_name}:${(info.selected || "").toLowerCase()}` : "", nameTouched: false };
+  } catch (err) {
+    hfState = null;
+    sp.stop();
+    out.innerHTML = `<p class="status is-bad">✖ ${esc(err.message)}</p>`;
+    return;
+  }
+  sp.stop();
+  paintHf();
+}
+
+function paintHf() {
+  const out = $("#hf-out");
+  if (!out || !hfState) return;
+  const { info } = hfState;
+  out.innerHTML = "";
+  const head = el("div", "hf-head");
+  const meta = [
+    info.author && `👤 ${esc(info.author)}`,
+    info.downloads != null && `↓ ${Number(info.downloads).toLocaleString("tr-TR")}`,
+    info.likes != null && `♥ ${info.likes}`,
+    info.license && `lisans: ${esc(info.license)}`,
+    info.base_model && `temel: ${esc(info.base_model)}`,
+  ].filter(Boolean).join(" · ");
+  head.innerHTML = `<a href="${esc(info.url)}" target="_blank" rel="noopener" class="hf-repo">${esc(info.repo)} ↗</a><div class="specs">${meta}</div>`;
+  out.appendChild(head);
+  if (info.gated) {
+    out.appendChild(el("p", "status is-warn",
+      "! Bu depo erişim izni istiyor: Hugging Face'te koşulları kabul et ve Ollama'nın anahtarını (~/.ollama/id_ed25519.pub) HF hesabına ekle."));
+  }
+
+  if (info.error) {
+    out.appendChild(el("p", "status is-bad", "✖ " + esc(info.error)));
+    if (info.alternatives?.length) {
+      out.appendChild(el("p", "muted", "GGUF sürümleri:"));
+      const list = el("div", "folder-list");
+      info.alternatives.forEach((a) => {
+        const b = el("button", "", `${esc(a.repo)} <span class="muted">↓ ${Number(a.downloads || 0).toLocaleString("tr-TR")}</span>`);
+        b.type = "button";
+        b.addEventListener("click", () => openHf(`https://huggingface.co/${a.repo}`));
+        list.appendChild(b);
+      });
+      out.appendChild(list);
+    }
+    return;
+  }
+
+  out.appendChild(el("p", "panel-desc",
+    `${info.files.length} sürüm bulundu. Büyük sürüm daha kaliteli ama daha çok bellek ister` +
+    (info.hardware?.vram_gb ? ` (sende ${info.hardware.vram_gb} GB VRAM, ${info.hardware.ram_gb} GB RAM).` : ` (ekran kartı yok; ${info.hardware?.ram_gb} GB RAM).`)));
+  const list = el("div", "model-list");
+  info.files.forEach((f) => {
+    const sel = f.quant === hfState.quant;
+    const r = el("div", `model-row base-row fit-${f.fit}${sel ? " is-sel" : ""}`);
+    r.tabIndex = 0;
+    r.innerHTML =
+      `<div><div class="name">${sel ? "● " : "○ "}${esc(f.quant)} <span class="fit">${esc(f.fit_label)}</span>` +
+      `${f.quant === info.recommended ? ' <span class="badge red">★ ÖNERİLEN</span>' : ""}` +
+      `${f.split ? ` <span class="badge">${f.parts} parça</span>` : ""}</div>` +
+      `<div class="specs"><span>${f.size ? fmtBytes(f.size) : "boyut ?"}</span><span>${esc(f.file)}</span></div></div>`;
+    const pick = () => {
+      hfState.quant = f.quant;
+      if (!hfState.nameTouched && info.suggested_name) hfState.name = `${info.suggested_name}:${f.quant.toLowerCase()}`;
+      paintHf();
+    };
+    r.addEventListener("click", pick);
+    r.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    list.appendChild(r);
+  });
+  out.appendChild(list);
+
+  const full = `hf.co/${info.repo}:${hfState.quant}`;
+  const nameIn = el("input");
+  nameIn.value = hfState.name;
+  nameIn.spellcheck = false;
+  nameIn.placeholder = "kısa ad (boş: hf.co/... adıyla kalır)";
+  nameIn.addEventListener("input", () => { hfState.name = nameIn.value; hfState.nameTouched = true; });
+  const installed = isInstalled(full) || (hfState.name && isInstalled(hfState.name.trim()));
+  const go = button(pulls.has(full) ? "İPTAL" : installed ? "KURULU ✓ · KULLAN" : "İNDİR VE EKLE", installed ? "btn" : "btn-solid", () => {
+    if (installed && !pulls.has(full)) return setModel(isInstalled(hfState.name.trim()) ? hfState.name.trim() : full);
+    const alias = hfState.name.trim();
+    pull(full, async () => {
+      if (!alias) return;
+      try {
+        const r = await api("/api/models/copy", { method: "POST", body: { source: full, destination: alias, delete_source: true } });
+        toast(`Eklendi: ${r.name}`);
+      } catch (err) {
+        toast("Kısa ad verilemedi (hf.co adıyla duruyor): " + err.message, true);
+      }
+    }).then(paintHf);
+  });
+  go.dataset.pullBtn = full;
+  go.dataset.idle = installed ? "KURULU ✓ · KULLAN" : "İNDİR VE EKLE";
+  const row = el("div", "row");
+  row.style.marginTop = "0.85rem";
+  row.append(nameIn, go);
+  const prog = el("div", "progress");
+  prog.dataset.pull = full;
+  prog.hidden = true;
+  out.append(row, prog);
+  out.appendChild(el("p", "muted", `Ollama'daki tam adı: <code>${esc(full)}</code>`));
+  paintPull(full);
+}

@@ -180,8 +180,10 @@ class DB:
         for row in self._q("SELECT key, value FROM settings"):
             if row["key"] in out:
                 out[row["key"]] = json.loads(row["value"])
+        # None = bilerek "kişiliksiz" seçildi. Yalnızca silinmiş bir kişiliğe işaret
+        # ediyorsa ilk kişiliğe düş.
         ids = {p["id"] for p in self.list_personas()}
-        if out["active_persona_id"] not in ids:
+        if out["active_persona_id"] is not None and out["active_persona_id"] not in ids:
             out["active_persona_id"] = next(iter(self.list_personas()), {}).get("id")
         return out
 

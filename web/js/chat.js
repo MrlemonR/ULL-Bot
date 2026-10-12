@@ -421,7 +421,8 @@ const pMenu = $("#persona-menu");
 
 function renderPersonaButton() {
   const p = activePersona();
-  $("#persona-name").textContent = p ? p.name : "kişiliksiz";
+  $("#persona-name").textContent = p ? p.name : "KİŞİLİKSİZ";
+  pBtn.querySelector(".glyph").textContent = p ? "◆" : "◇";
   pBtn.title = p ? `Kişilik: ${p.name}` : "Kişilik seçilmedi — sistem promptu gönderilmez";
   if (!emptyBox.hidden) renderEmpty();
 }
@@ -433,6 +434,19 @@ function closePersonaMenu() {
 
 function openPersonaMenu() {
   pMenu.innerHTML = '<div class="pop-title">KİŞİLİK SEÇ</div>';
+  // Kişiliksiz: modele hiçbir sistem promptu gitmez, model kendi hâliyle konuşur.
+  const none = !activePersona();
+  const plain = el("button", "pop-item" + (none ? " is-active" : ""));
+  plain.type = "button";
+  plain.setAttribute("role", "option");
+  plain.setAttribute("aria-selected", String(none));
+  plain.innerHTML = '<span class="n">Kişiliksiz</span><span class="p">Sistem promptu gönderilmez — model kendi hâliyle konuşur.</span>';
+  plain.addEventListener("click", () => {
+    closePersonaMenu();
+    selectPersona(null);
+    input.focus();
+  });
+  pMenu.appendChild(plain);
   S.personas.forEach((p) => {
     const active = p.id === S.settings.active_persona_id;
     const opt = el("button", "pop-item" + (active ? " is-active" : ""));

@@ -596,3 +596,20 @@ def test_prefab_filename_is_safe(client, tmp_path):
     r = client.post("/api/prefabs", json={"name": "../../Türkçe: ayar/1"}).json()
     assert "/" not in r["file"] and r["file"].endswith(".json")
     assert (tmp_path / "prefab" / r["file"]).exists()
+
+
+def test_chat_without_persona_when_chosen(client, ollama):
+    """Kişilik menüsündeki "Kişiliksiz": sistem promptu da hatırlatma da gitmez."""
+    s = client.put("/api/active", json={"persona_id": None}).json()
+    assert s["active_persona_id"] is None
+    assert client.get("/api/settings").json()["active_persona_id"] is None  # ilk kişiliğe geri düşmez
+    chat_id = send(client, content="selam")[0]["chat"]["id"]
+    send(client, chat_id=chat_id, content="nasılsın?")
+    msgs = ollama.chat_requests[-1]["messages"]
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user"]
+    assert msgs[-1]["content"] == "nasılsın?"
+    stored = client.get(f"/api/chats/{chat_id}").json()["messages"]
+    assert "persona_name" not in stored[1]["meta"]
+    # Tekrar bir kişilik seçilebilir.
+    pid = client.get("/api/personas").json()[0]["id"]
+    assert client.put("/api/active", json={"persona_id": pid}).json()["active_persona_id"] == pid
